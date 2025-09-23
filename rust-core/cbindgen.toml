@@ -1,0 +1,8 @@
+language = "C"
+include_guard = "AZURE_CVM_ATTESTATION_H"
+namespace = "azure_cvm_attestation"
+
+[parse]
+parse_deps = true
+
+enum_typedefs = true

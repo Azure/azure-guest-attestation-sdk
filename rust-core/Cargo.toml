@@ -1,0 +1,13 @@
+[package]
+name = "azure_cvm_tpm_sdk"
+version = "0.1.0"
+edition = "2021"
+description = "Rust core for Azure CVM Attestation SDK (cdylib)"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "azure_cvm_tpm_sdk"
+crate-type = ["cdylib"]
+
+[dependencies]
+libc = "0.2"

@@ -1,14 +1,65 @@
-# Project
+# Azure CVM Attestation SDK
 
-> This repo has been populated by an initial template to help get you started. Please
-> make sure to update the content to build a great experience for community-building.
+## Building the Rust core
 
-As the maintainer of this project, please make a few updates:
+This repository contains a Rust core library under `rust-core/`. The following steps explain how to prepare your environment and build the Rust portion of the project.
 
-- Improving this README.MD file to provide a great experience
-- Updating SUPPORT.MD with content about this project's support experience
-- Understanding the security reporting process in SECURITY.MD
-- Remove this section from the README
+### Prerequisites
+
+- Rust toolchain (install via [rustup](https://www.rust-lang.org/tools/install))
+- On Windows: Visual Studio Build Tools (MSVC) if you plan to build the MSVC target. Install the "Desktop development with C++" workload. Alternatively you can use the GNU toolchain (MinGW) if preferred.
+- `cbindgen` (optional) if you want to regenerate the C header: `cargo install cbindgen`
+
+### Quick start (recommended)
+
+1. Run the provided setup script to install `rustup` and `cbindgen` (Windows PowerShell):
+
+   ```powershell
+   .\scripts\setup.ps1
+   ```
+
+   After the script finishes you may need to close and re-open your shell so the Cargo bin (`%USERPROFILE%\.cargo\bin`) is added to your PATH.
+
+2. Build the Rust core in release mode:
+
+   ```powershell
+   cd rust-core
+   cargo build --release
+   ```
+
+   Build artifacts are written to `rust-core/target/release/`. The produced native library will be named according to the platform (for example: `libazure_cvm_attestation.so`, `libazure_cvm_attestation.dylib`, or `azure_cvm_attestation.dll`).
+
+### Regenerate the C header with cbindgen (optional)
+
+From the repository root or from the `rust-core` directory, run:
+
+```bash
+# from rust-core/
+cd rust-core
+cbindgen --config cbindgen.toml -l C -o include/azure_cvm_attestation.h
+```
+
+This will update `rust-core/include/azure_cvm_attestation.h` based on the public Rust API and the provided `cbindgen.toml` configuration.
+
+### Cross-compilation and targets
+
+- To build for a different target, install the target with rustup and pass `--target` to cargo. Example (Windows MSVC x64):
+
+```powershell
+rustup target add x86_64-pc-windows-msvc
+cargo build --release --target x86_64-pc-windows-msvc
+```
+
+### Troubleshooting
+
+- If `rustup` or `cargo` are not found after running the setup script, close and re-open your terminal or add `%USERPROFILE%\.cargo\bin` to your PATH in the current session:
+
+```powershell
+$env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
+```
+
+- On Windows, if linking fails or you see MSVC-related errors, ensure the Visual Studio Build Tools are installed with the C++ workload and that you have opened a developer command prompt or a shell with MSVC environment variables available.
+
 
 ## Contributing
 
