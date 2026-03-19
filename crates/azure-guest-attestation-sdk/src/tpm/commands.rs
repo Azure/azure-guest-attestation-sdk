@@ -699,7 +699,6 @@ impl<T: RawTpm> TpmCommandExt for T {
     }
 
     fn start_auth_session(&self, session_type: u8, auth_hash_alg: u16) -> io::Result<u32> {
-        use crate::tpm::types::Tpm2bBytes;
         use rand::RngCore;
         let mut nonce = vec![0u8; 16];
         rand::rngs::OsRng.fill_bytes(&mut nonce);
@@ -740,7 +739,6 @@ impl<T: RawTpm> TpmCommandExt for T {
         if pcrs.is_empty() {
             return Ok(());
         }
-        use crate::tpm::types::{PcrSelectionList, Tpm2bBytes};
         use sha2::{Digest, Sha256};
         let values = self.read_pcrs_sha256(pcrs)?;
         let mut hasher = Sha256::new();
@@ -900,8 +898,6 @@ impl<T: RawTpm> TpmCommandExt for T {
     }
 
     fn nv_extend(&self, nv_index: u32, data: &[u8]) -> io::Result<()> {
-        use crate::tpm::types::{NvExtendCommand, NvExtendResponse};
-
         if data.is_empty() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -937,8 +933,6 @@ impl<T: RawTpm> TpmCommandExt for T {
         size: u16,
         offset: u16,
     ) -> io::Result<(Vec<u8>, Vec<u8>)> {
-        use crate::tpm::types::{NvCertifyCommand, NvCertifyResponse};
-
         if qualifying_data.len() > 64 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
