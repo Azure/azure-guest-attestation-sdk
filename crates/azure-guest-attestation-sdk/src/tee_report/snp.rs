@@ -98,3 +98,71 @@ pub struct SnpReport {
 const _: () = {
     assert!(SNP_REPORT_SIZE == core::mem::size_of::<SnpReport>());
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::mem::{align_of, size_of};
+
+    #[test]
+    fn snp_report_size_matches_spec() {
+        assert_eq!(size_of::<SnpReport>(), SNP_REPORT_SIZE);
+        assert_eq!(SNP_REPORT_SIZE, 0x4a0);
+    }
+
+    #[test]
+    fn snp_report_data_size() {
+        assert_eq!(SNP_REPORT_DATA_SIZE, 64);
+    }
+
+    #[test]
+    fn snp_report_data_field_size() {
+        let report: SnpReport = unsafe { core::mem::zeroed() };
+        assert_eq!(report.report_data.len(), SNP_REPORT_DATA_SIZE);
+    }
+
+    #[test]
+    fn snp_report_measurement_size() {
+        let report: SnpReport = unsafe { core::mem::zeroed() };
+        assert_eq!(report.measurement.len(), 48);
+    }
+
+    #[test]
+    fn snp_report_host_data_size() {
+        let report: SnpReport = unsafe { core::mem::zeroed() };
+        assert_eq!(report.host_data.len(), 32);
+    }
+
+    #[test]
+    fn snp_report_chip_id_size() {
+        let report: SnpReport = unsafe { core::mem::zeroed() };
+        assert_eq!(report.chip_id.len(), 64);
+    }
+
+    #[test]
+    fn snp_report_signature_size() {
+        let report: SnpReport = unsafe { core::mem::zeroed() };
+        assert_eq!(report.signature.len(), 512);
+    }
+
+    #[test]
+    fn snp_report_digest_sizes() {
+        let report: SnpReport = unsafe { core::mem::zeroed() };
+        assert_eq!(report.id_key_digest.len(), 48);
+        assert_eq!(report.author_key_digest.len(), 48);
+    }
+
+    #[test]
+    fn snp_report_alignment() {
+        assert!(align_of::<SnpReport>() <= 16);
+    }
+
+    #[test]
+    fn snp_report_zeroed_has_default_values() {
+        let report: SnpReport = unsafe { core::mem::zeroed() };
+        assert_eq!(report.version, 0);
+        assert_eq!(report.guest_svn, 0);
+        assert_eq!(report.policy, 0);
+        assert_eq!(report.vmpl, 0);
+    }
+}

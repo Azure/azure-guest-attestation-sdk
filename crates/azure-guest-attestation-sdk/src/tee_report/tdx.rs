@@ -182,3 +182,88 @@ pub struct TdInfoBase {
     /// SHA384 of the `TDINFO_STRUCTs` of bound service TDs if there is any.
     pub servd_hash: [u8; 48],
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::mem::{align_of, size_of};
+
+    #[test]
+    fn td_report_size_matches_spec() {
+        assert_eq!(size_of::<TdReport>(), TDX_REPORT_SIZE);
+        assert_eq!(TDX_REPORT_SIZE, 0x400);
+    }
+
+    #[test]
+    fn report_data_size() {
+        assert_eq!(TDX_REPORT_DATA_SIZE, 64);
+    }
+
+    #[test]
+    fn report_mac_report_data_field_size() {
+        // The report_data field in ReportMac should be exactly TDX_REPORT_DATA_SIZE
+        let mac: ReportMac = unsafe { core::mem::zeroed() };
+        assert_eq!(mac.report_data.len(), TDX_REPORT_DATA_SIZE);
+    }
+
+    #[test]
+    fn td_info_base_rtmr_count() {
+        let base: TdInfoBase = unsafe { core::mem::zeroed() };
+        assert_eq!(base.rtmr.len(), 4);
+        // Each RTMR is 48 bytes
+        for rtmr in &base.rtmr {
+            assert_eq!(rtmr.len(), 48);
+        }
+    }
+
+    #[test]
+    fn td_attributes_debug_flag() {
+        let attrs = TdAttributes::new().with_debug(true);
+        assert!(attrs.debug());
+        let attrs_no_debug = TdAttributes::new().with_debug(false);
+        assert!(!attrs_no_debug.debug());
+    }
+
+    #[test]
+    fn td_attributes_migratable_flag() {
+        let attrs = TdAttributes::new().with_migratable(true);
+        assert!(attrs.migratable());
+        assert!(!attrs.debug());
+    }
+
+    #[test]
+    fn td_attributes_multiple_flags() {
+        let attrs = TdAttributes::new()
+            .with_debug(true)
+            .with_pks(true)
+            .with_perfmon(true);
+        assert!(attrs.debug());
+        assert!(attrs.pks());
+        assert!(attrs.perfmon());
+        assert!(!attrs.migratable());
+    }
+
+    #[test]
+    fn td_attributes_default_is_zero() {
+        let attrs = TdAttributes::new();
+        assert_eq!(u64::from(attrs), 0);
+    }
+
+    #[test]
+    fn report_type_layout() {
+        assert_eq!(size_of::<ReportType>(), 4);
+    }
+
+    #[test]
+    fn tee_tcb_svn_layout() {
+        assert_eq!(size_of::<TeeTcbSvn>(), 16);
+    }
+
+    #[test]
+    fn struct_alignment() {
+        // These should be packed with no gaps larger than u64 alignment
+        assert!(align_of::<TdReport>() <= 8);
+        assert!(align_of::<ReportMac>() <= 8);
+        assert!(align_of::<TdInfoBase>() <= 8);
+    }
+}

@@ -1116,3 +1116,474 @@ pub fn parse_token(
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("jwt utf8: {e}")))?;
     Ok(Some(jwt_str))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -----------------------------------------------------------------------
+    // parse_version_pair tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_version_pair_major_minor() {
+        assert_eq!(parse_version_pair("10.0"), (10, 0));
+        assert_eq!(parse_version_pair("22.04"), (22, 4));
+        assert_eq!(parse_version_pair("1.2"), (1, 2));
+    }
+
+    #[test]
+    fn parse_version_pair_major_only() {
+        assert_eq!(parse_version_pair("10"), (10, 0));
+    }
+
+    #[test]
+    fn parse_version_pair_empty() {
+        assert_eq!(parse_version_pair(""), (0, 0));
+    }
+
+    #[test]
+    fn parse_version_pair_triple() {
+        // Only first two parts used
+        assert_eq!(parse_version_pair("1.2.3"), (1, 2));
+    }
+
+    #[test]
+    fn parse_version_pair_non_numeric() {
+        assert_eq!(parse_version_pair("abc.def"), (0, 0));
+    }
+
+    // -----------------------------------------------------------------------
+    // base64_url_encode / base64_url_decode tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn base64_url_roundtrip_empty() {
+        let encoded = base64_url_encode(&[]);
+        let decoded = base64_url_decode(&encoded).unwrap();
+        assert_eq!(decoded, Vec::<u8>::new());
+    }
+
+    #[test]
+    fn base64_url_roundtrip_simple() {
+        let data = b"Hello, World!";
+        let encoded = base64_url_encode(data);
+        let decoded = base64_url_decode(&encoded).unwrap();
+        assert_eq!(decoded, data);
+    }
+
+    #[test]
+    fn base64_url_roundtrip_binary() {
+        let data: Vec<u8> = (0..=255).collect();
+        let encoded = base64_url_encode(&data);
+        let decoded = base64_url_decode(&encoded).unwrap();
+        assert_eq!(decoded, data);
+    }
+
+    #[test]
+    fn base64_url_no_padding() {
+        let encoded = base64_url_encode(b"test");
+        assert!(!encoded.contains('='));
+    }
+
+    #[test]
+    fn base64_url_uses_url_safe_chars() {
+        // Binary data that would produce + and / in standard base64
+        let data = vec![0xFF; 16];
+        let encoded = base64_url_encode(&data);
+        assert!(!encoded.contains('+'));
+        assert!(!encoded.contains('/'));
+    }
+
+    #[test]
+    fn base64_url_decode_invalid() {
+        let result = base64_url_decode("!!!invalid!!!");
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+    }
+
+    // -----------------------------------------------------------------------
+    // OsInfo tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn os_info_detect() {
+        // This test will detect the current OS
+        let result = OsInfo::detect();
+        #[cfg(target_os = "linux")]
+        {
+            let info = result.expect("should detect Linux");
+            assert_eq!(info.os_type, "Linux");
+            assert_eq!(info.pcr_list, vec![0, 1, 2, 3, 4, 5, 6, 7]);
+        }
+        #[cfg(target_os = "windows")]
+        {
+            let info = result.expect("should detect Windows");
+            assert_eq!(info.os_type, "Windows");
+            assert_eq!(info.pcr_list, vec![0, 1, 2, 3, 4, 5, 6, 7, 11, 12, 13, 14]);
+        }
+    }
+
+    #[test]
+    fn os_info_serialization() {
+        let info = OsInfo {
+            os_type: "Linux".into(),
+            distro: "Ubuntu".into(),
+            version_major: 22,
+            version_minor: 4,
+            build: "NotApplication".into(),
+            pcr_list: vec![0, 1, 2, 3],
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"os_type\":\"Linux\""));
+        assert!(json.contains("\"distro\":\"Ubuntu\""));
+        assert!(json.contains("\"version_major\":22"));
+    }
+
+    #[test]
+    fn os_info_deserialization_roundtrip() {
+        let info = OsInfo {
+            os_type: "Windows".into(),
+            distro: "Windows".into(),
+            version_major: 10,
+            version_minor: 0,
+            build: "NotApplication".into(),
+            pcr_list: vec![0, 1, 2, 3, 4, 5, 6, 7],
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        let deserialized: OsInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.os_type, info.os_type);
+        assert_eq!(deserialized.distro, info.distro);
+        assert_eq!(deserialized.version_major, info.version_major);
+        assert_eq!(deserialized.pcr_list, info.pcr_list);
+    }
+
+    // -----------------------------------------------------------------------
+    // IsolationType serialization tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn isolation_type_serialization() {
+        let json = serde_json::to_string(&IsolationType::SevSnp).unwrap();
+        assert_eq!(json, "\"SevSnp\"");
+
+        let json = serde_json::to_string(&IsolationType::Tdx).unwrap();
+        assert_eq!(json, "\"Tdx\"");
+
+        let json = serde_json::to_string(&IsolationType::TrustedLaunch).unwrap();
+        assert_eq!(json, "\"TrustedLaunch\"");
+    }
+
+    // -----------------------------------------------------------------------
+    // IsolationInfo serialization tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn isolation_info_without_evidence() {
+        let info = IsolationInfo {
+            vm_type: IsolationType::TrustedLaunch,
+            evidence: None,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"Type\":\"TrustedLaunch\""));
+        assert!(!json.contains("Evidence"));
+    }
+
+    #[test]
+    fn isolation_info_with_snp_evidence() {
+        let info = IsolationInfo {
+            vm_type: IsolationType::SevSnp,
+            evidence: Some(IsolationEvidence {
+                tee_proof: TeeProof::Snp {
+                    snp_report: vec![0xAA; 32],
+                    vcek_chain: vec![0xBB; 16],
+                },
+                runtime_data: vec![0xCC; 8],
+            }),
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"Type\":\"SevSnp\""));
+        assert!(json.contains("SnpReport"));
+        assert!(json.contains("VcekCertChain"));
+        assert!(json.contains("RunTimeData"));
+    }
+
+    #[test]
+    fn isolation_info_with_tdx_evidence() {
+        let info = IsolationInfo {
+            vm_type: IsolationType::Tdx,
+            evidence: Some(IsolationEvidence {
+                tee_proof: TeeProof::Tdx {
+                    td_quote: vec![0xDD; 64],
+                },
+                runtime_data: vec![],
+            }),
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"Type\":\"Tdx\""));
+    }
+
+    // -----------------------------------------------------------------------
+    // TeeProof serialization tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn tee_proof_snp_serialization() {
+        let proof = TeeProof::Snp {
+            snp_report: vec![1, 2, 3],
+            vcek_chain: vec![4, 5, 6],
+        };
+        let json = serde_json::to_string(&proof).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(v.get("SnpReport").is_some());
+        assert!(v.get("VcekCertChain").is_some());
+    }
+
+    #[test]
+    fn tee_proof_tdx_serialization() {
+        let proof = TeeProof::Tdx {
+            td_quote: vec![7, 8, 9],
+        };
+        let json = serde_json::to_string(&proof).unwrap();
+        // TDX serializes as a plain base64 string
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(v.is_string());
+    }
+
+    // -----------------------------------------------------------------------
+    // LoopbackProvider tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn loopback_provider_returns_token() {
+        let provider = LoopbackProvider;
+        let result = provider.attest_guest("test_request").unwrap();
+        assert!(result.is_some());
+        let token = result.unwrap();
+        // Token should be base64url encoded
+        let decoded = base64_url_decode(&token).unwrap();
+        let json_str = String::from_utf8(decoded).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(v["loopback"], true);
+        assert_eq!(v["request"], "test_request");
+    }
+
+    // -----------------------------------------------------------------------
+    // PcrEntry serialization tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn pcr_entry_serialization() {
+        let entry = PcrEntry {
+            index: 7,
+            digest: vec![0xAA; 32],
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("\"Index\":7"));
+        assert!(json.contains("\"Digest\":"));
+    }
+
+    // -----------------------------------------------------------------------
+    // TpmInfo serialization tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn tpm_info_serialization() {
+        let info = TpmInfo {
+            ak_cert: vec![1],
+            ak_pub: vec![2],
+            pcr_quote: vec![3],
+            pcr_sig: vec![4],
+            pcr_set: vec![0, 1, 7],
+            pcrs: vec![PcrEntry {
+                index: 0,
+                digest: vec![0; 32],
+            }],
+            enc_key_pub: vec![5],
+            enc_key_certify_info: vec![6],
+            enc_key_certify_info_sig: vec![7],
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"AikCert\":"));
+        assert!(json.contains("\"AikPub\":"));
+        assert!(json.contains("\"PcrQuote\":"));
+        assert!(json.contains("\"PcrSignature\":"));
+        assert!(json.contains("\"PcrSet\":[0,1,7]"));
+        assert!(json.contains("\"EncKeyPub\":"));
+    }
+
+    // -----------------------------------------------------------------------
+    // GuestAttestationParameters serialization tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn guest_attestation_parameters_to_json() {
+        let params = GuestAttestationParameters {
+            protocol_version: "2.0".into(),
+            os_type: "Linux".into(),
+            os_distro: "Ubuntu".into(),
+            os_version_major: 22,
+            os_version_minor: 4,
+            os_build: "NotApplication".into(),
+            tcg_logs: vec![0xAA],
+            client_payload: r#"{"key":"value"}"#.into(),
+            tpm_info: TpmInfo {
+                ak_cert: vec![1],
+                ak_pub: vec![2],
+                pcr_quote: vec![3],
+                pcr_sig: vec![4],
+                pcr_set: vec![0],
+                pcrs: vec![],
+                enc_key_pub: vec![5],
+                enc_key_certify_info: vec![6],
+                enc_key_certify_info_sig: vec![7],
+            },
+            isolation: IsolationInfo {
+                vm_type: IsolationType::TrustedLaunch,
+                evidence: None,
+            },
+        };
+        let json = params.to_json_string();
+        assert!(!json.is_empty());
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["AttestationProtocolVersion"], "2.0");
+        assert!(v["TcgLogs"].is_string()); // base64 encoded
+        assert!(v["ClientPayload"].is_object()); // client_payload_b64 serializer
+    }
+
+    #[test]
+    fn guest_attestation_params_empty_client_payload() {
+        let params = GuestAttestationParameters {
+            protocol_version: "2.0".into(),
+            os_type: "Linux".into(),
+            os_distro: "Test".into(),
+            os_version_major: 0,
+            os_version_minor: 0,
+            os_build: "".into(),
+            tcg_logs: vec![],
+            client_payload: "".into(),
+            tpm_info: TpmInfo {
+                ak_cert: vec![],
+                ak_pub: vec![],
+                pcr_quote: vec![],
+                pcr_sig: vec![],
+                pcr_set: vec![],
+                pcrs: vec![],
+                enc_key_pub: vec![],
+                enc_key_certify_info: vec![],
+                enc_key_certify_info_sig: vec![],
+            },
+            isolation: IsolationInfo {
+                vm_type: IsolationType::TrustedLaunch,
+                evidence: None,
+            },
+        };
+        let json = params.to_json_string();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        // Empty client payload should serialize as empty object
+        assert!(v["ClientPayload"].is_object());
+        assert_eq!(v["ClientPayload"].as_object().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn guest_attestation_params_invalid_json_client_payload() {
+        let params = GuestAttestationParameters {
+            protocol_version: "2.0".into(),
+            os_type: "Linux".into(),
+            os_distro: "Test".into(),
+            os_version_major: 0,
+            os_version_minor: 0,
+            os_build: "".into(),
+            tcg_logs: vec![],
+            client_payload: "not valid json".into(),
+            tpm_info: TpmInfo {
+                ak_cert: vec![],
+                ak_pub: vec![],
+                pcr_quote: vec![],
+                pcr_sig: vec![],
+                pcr_set: vec![],
+                pcrs: vec![],
+                enc_key_pub: vec![],
+                enc_key_certify_info: vec![],
+                enc_key_certify_info_sig: vec![],
+            },
+            isolation: IsolationInfo {
+                vm_type: IsolationType::TrustedLaunch,
+                evidence: None,
+            },
+        };
+        let json = params.to_json_string();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        // Invalid JSON client payload should be treated as empty object
+        assert!(v["ClientPayload"].is_object());
+        assert_eq!(v["ClientPayload"].as_object().unwrap().len(), 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // StageTimer tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn stage_timer_basic() {
+        let mut timer = StageTimer::new();
+        // Just verify it doesn't panic
+        timer.mark("test_stage");
+        timer.mark("another_stage");
+    }
+
+    // -----------------------------------------------------------------------
+    // collect_tcg_logs tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn collect_tcg_logs_unknown_os() {
+        let os = OsInfo {
+            os_type: "UnknownOS".into(),
+            distro: "".into(),
+            version_major: 0,
+            version_minor: 0,
+            build: "".into(),
+            pcr_list: vec![],
+        };
+        let logs = collect_tcg_logs(&os);
+        assert!(logs.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // AttestCvmResult tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn attest_cvm_result_serialization() {
+        let result = AttestCvmResult {
+            request_json: "{}".into(),
+            encoded_request_b64url: "abc".into(),
+            token_b64url: Some("token".into()),
+            ephemeral_key_handle: Some(0x81000001),
+            pcrs: vec![0, 1, 7],
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let deserialized: AttestCvmResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.request_json, "{}");
+        assert_eq!(deserialized.token_b64url, Some("token".into()));
+        assert_eq!(deserialized.pcrs, vec![0, 1, 7]);
+    }
+
+    // -----------------------------------------------------------------------
+    // TeeOnlyRequest tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn tee_only_request_serialization() {
+        let req = TeeOnlyRequest {
+            evidence_field: "quote".into(),
+            evidence_b64: "abc123".into(),
+            runtime_b64: "def456".into(),
+            report_type: "TdxVmReport".into(),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let deserialized: TeeOnlyRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.evidence_field, "quote");
+        assert_eq!(deserialized.report_type, "TdxVmReport");
+    }
+}

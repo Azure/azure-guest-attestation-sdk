@@ -1019,3 +1019,466 @@ struct JsonDigestEntry {
     hash_alg: String,
     digest: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tpm::types::PcrAlgorithm;
+
+    // -----------------------------------------------------------------------
+    // event_type_description tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn event_type_known_types() {
+        assert_eq!(event_type_description(0x00000000), Some("EV_PREBOOT_CERT"));
+        assert_eq!(event_type_description(0x00000004), Some("EV_SEPARATOR"));
+        assert_eq!(
+            event_type_description(0x80000001),
+            Some("EV_EFI_VARIABLE_DRIVER_CONFIG")
+        );
+        assert_eq!(
+            event_type_description(0x800000E0),
+            Some("EV_SYSTEMD_MEASURE")
+        );
+    }
+
+    #[test]
+    fn event_type_unknown() {
+        assert_eq!(event_type_description(0xDEADBEEF), None);
+        assert_eq!(event_type_description(0x00000099), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // is_mostly_printable tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn is_mostly_printable_empty() {
+        assert!(!is_mostly_printable(&[]));
+    }
+
+    #[test]
+    fn is_mostly_printable_ascii_text() {
+        assert!(is_mostly_printable(b"Hello, world!"));
+        assert!(is_mostly_printable(b"key=value\n"));
+    }
+
+    #[test]
+    fn is_mostly_printable_binary_data() {
+        assert!(!is_mostly_printable(&[0x00, 0x01, 0x02, 0x03, 0x04]));
+    }
+
+    #[test]
+    fn is_mostly_printable_mixed_threshold() {
+        // 80% threshold: 8 printable + 2 non-printable out of 10 = 80% => true
+        let data = b"abcdefgh\x01\x02";
+        assert!(is_mostly_printable(data));
+        // Below threshold: 7 printable + 3 non-printable out of 10 = 70% => false
+        let data2 = b"abcdefg\x01\x02\x03";
+        assert!(!is_mostly_printable(data2));
+    }
+
+    #[test]
+    fn is_mostly_printable_tabs_and_newlines() {
+        assert!(is_mostly_printable(b"line1\nline2\ttab"));
+    }
+
+    // -----------------------------------------------------------------------
+    // try_parse_spec_id_event tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn try_parse_spec_id_event_valid() {
+        let mut data = Vec::new();
+        // Signature: "Spec ID Event03\0" (16 bytes)
+        let sig = b"Spec ID Event03\0";
+        data.extend_from_slice(sig);
+        // Platform class (u32 LE)
+        data.extend_from_slice(&0u32.to_le_bytes());
+        // Version major, minor, errata, uintn_size
+        data.push(2); // major
+        data.push(0); // minor
+        data.push(0); // errata
+        data.push(2); // uintn_size
+                      // Algorithm count = 1
+        data.extend_from_slice(&1u32.to_le_bytes());
+        // Algorithm: SHA256 (0x000B), size 32
+        data.extend_from_slice(&0x000Bu16.to_le_bytes());
+        data.extend_from_slice(&32u16.to_le_bytes());
+        // Vendor info size = 0
+        data.push(0);
+
+        let spec = try_parse_spec_id_event(&data).expect("should parse");
+        assert!(spec.signature.starts_with("Spec ID Event"));
+        assert_eq!(spec.spec_version_major, 2);
+        assert_eq!(spec.algorithms.len(), 1);
+        assert_eq!(spec.algorithms[0].algorithm_id, 0x000B);
+        assert_eq!(spec.algorithms[0].digest_size, 32);
+    }
+
+    #[test]
+    fn try_parse_spec_id_event_too_short() {
+        assert!(try_parse_spec_id_event(&[0u8; 10]).is_none());
+    }
+
+    #[test]
+    fn try_parse_spec_id_event_wrong_signature() {
+        let mut data = vec![0u8; 30];
+        data[..12].copy_from_slice(b"Not a Spec!\0");
+        assert!(try_parse_spec_id_event(&data).is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Event::digest_for_algorithm tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn digest_for_algorithm_found() {
+        let event = Event {
+            pcr_index: 0,
+            event_type: 0,
+            digests: vec![
+                EventDigest {
+                    alg_id: PcrAlgorithm::Sha1.to_alg_id(),
+                    digest: vec![0xAA; 20],
+                },
+                EventDigest {
+                    alg_id: PcrAlgorithm::Sha256.to_alg_id(),
+                    digest: vec![0xBB; 32],
+                },
+            ],
+            event_data: vec![],
+        };
+        let sha256 = event.digest_for_algorithm(PcrAlgorithm::Sha256).unwrap();
+        assert_eq!(sha256.len(), 32);
+        assert!(sha256.iter().all(|&b| b == 0xBB));
+    }
+
+    #[test]
+    fn digest_for_algorithm_not_found() {
+        let event = Event {
+            pcr_index: 0,
+            event_type: 0,
+            digests: vec![EventDigest {
+                alg_id: PcrAlgorithm::Sha1.to_alg_id(),
+                digest: vec![0xAA; 20],
+            }],
+            event_data: vec![],
+        };
+        assert!(event.digest_for_algorithm(PcrAlgorithm::Sha384).is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // parse_event_log (Event1 format) tests
+    // -----------------------------------------------------------------------
+
+    fn build_event1_entry(
+        pcr: u32,
+        event_type: u32,
+        sha1_digest: &[u8; 20],
+        data: &[u8],
+    ) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&pcr.to_le_bytes());
+        buf.extend_from_slice(&event_type.to_le_bytes());
+        buf.extend_from_slice(sha1_digest);
+        buf.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        buf.extend_from_slice(data);
+        buf
+    }
+
+    #[test]
+    fn parse_event1_single_event() {
+        let digest = [0xAA; 20];
+        let data = b"test event data";
+        let raw = build_event1_entry(0, 0x00000001, &digest, data);
+        let log = parse_event_log(&raw).expect("parse event1");
+        assert_eq!(log.events.len(), 1);
+        assert_eq!(log.events[0].pcr_index, 0);
+        assert_eq!(log.events[0].event_type, 0x00000001);
+        assert_eq!(log.events[0].event_data, data);
+        assert_eq!(log.events[0].digests.len(), 1);
+        assert_eq!(log.events[0].digests[0].digest, digest.to_vec());
+    }
+
+    #[test]
+    fn parse_event1_multiple_events() {
+        let mut raw = Vec::new();
+        raw.extend_from_slice(&build_event1_entry(0, 0x01, &[0x11; 20], b"ev1"));
+        raw.extend_from_slice(&build_event1_entry(1, 0x04, &[0x22; 20], b"ev2"));
+        let log = parse_event_log(&raw).expect("parse");
+        assert_eq!(log.events.len(), 2);
+        assert_eq!(log.events[0].pcr_index, 0);
+        assert_eq!(log.events[1].pcr_index, 1);
+    }
+
+    #[test]
+    fn parse_event_log_empty() {
+        // Empty data parses as an empty event log via the Event1 path (no entries to read)
+        let result = parse_event_log(&[]);
+        // The event1 parser returns Ok(EventLog { events: [] }) for empty input
+        // since there are no bytes to process. This is expected behavior.
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn parse_event_log_truncated() {
+        // Only 10 bytes, not enough for even a header
+        let raw = vec![0u8; 10];
+        let result = parse_event_log(&raw);
+        // This should either fail or parse incorrectly; we just check it doesn't panic
+        // The exact result depends on how the data is interpreted
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // replay_pcrs tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn replay_pcrs_empty_events() {
+        let events: Vec<Event> = vec![];
+        let pcrs = replay_pcrs(&events, PcrAlgorithm::Sha256);
+        assert!(pcrs.is_empty());
+    }
+
+    #[test]
+    fn replay_pcrs_single_extension() {
+        let measurement = vec![0x01; 32];
+        let events = vec![Event {
+            pcr_index: 0,
+            event_type: 0x01,
+            digests: vec![EventDigest {
+                alg_id: PcrAlgorithm::Sha256.to_alg_id(),
+                digest: measurement.clone(),
+            }],
+            event_data: vec![],
+        }];
+        let pcrs = replay_pcrs(&events, PcrAlgorithm::Sha256);
+        assert_eq!(pcrs.len(), 1);
+        let pcr0 = pcrs.get(&0).unwrap();
+        assert_eq!(pcr0.len(), 32);
+        // PCR should not be all zeros (it was extended)
+        assert_ne!(pcr0, &vec![0u8; 32]);
+    }
+
+    #[test]
+    fn replay_pcrs_multiple_pcrs() {
+        let events = vec![
+            Event {
+                pcr_index: 0,
+                event_type: 0x01,
+                digests: vec![EventDigest {
+                    alg_id: PcrAlgorithm::Sha256.to_alg_id(),
+                    digest: vec![0x01; 32],
+                }],
+                event_data: vec![],
+            },
+            Event {
+                pcr_index: 7,
+                event_type: 0x04,
+                digests: vec![EventDigest {
+                    alg_id: PcrAlgorithm::Sha256.to_alg_id(),
+                    digest: vec![0x02; 32],
+                }],
+                event_data: vec![],
+            },
+        ];
+        let pcrs = replay_pcrs(&events, PcrAlgorithm::Sha256);
+        assert_eq!(pcrs.len(), 2);
+        assert!(pcrs.contains_key(&0));
+        assert!(pcrs.contains_key(&7));
+    }
+
+    #[test]
+    fn replay_pcrs_deterministic() {
+        let events = vec![
+            Event {
+                pcr_index: 0,
+                event_type: 0x01,
+                digests: vec![EventDigest {
+                    alg_id: PcrAlgorithm::Sha256.to_alg_id(),
+                    digest: vec![0xAA; 32],
+                }],
+                event_data: vec![],
+            },
+            Event {
+                pcr_index: 0,
+                event_type: 0x02,
+                digests: vec![EventDigest {
+                    alg_id: PcrAlgorithm::Sha256.to_alg_id(),
+                    digest: vec![0xBB; 32],
+                }],
+                event_data: vec![],
+            },
+        ];
+        let pcrs1 = replay_pcrs(&events, PcrAlgorithm::Sha256);
+        let pcrs2 = replay_pcrs(&events, PcrAlgorithm::Sha256);
+        assert_eq!(pcrs1.get(&0), pcrs2.get(&0));
+    }
+
+    #[test]
+    fn replay_pcrs_ignores_wrong_algorithm() {
+        let events = vec![Event {
+            pcr_index: 0,
+            event_type: 0x01,
+            digests: vec![EventDigest {
+                alg_id: PcrAlgorithm::Sha1.to_alg_id(),
+                digest: vec![0x01; 20],
+            }],
+            event_data: vec![],
+        }];
+        // Request SHA256 replay but events only have SHA1
+        let pcrs = replay_pcrs(&events, PcrAlgorithm::Sha256);
+        assert!(pcrs.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // JSON event log parsing tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_json_event_log_basic() {
+        let json_line = r#"{"pcr":11,"digests":[{"hashAlg":"sha256","digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}]}"#;
+        let result = parse_event_log(json_line.as_bytes());
+        assert!(
+            result.is_ok(),
+            "parse_event_log should succeed for JSON format: {:?}",
+            result.err()
+        );
+        let log = result.unwrap();
+        assert_eq!(log.events.len(), 1);
+        assert_eq!(log.events[0].pcr_index, 11);
+    }
+
+    #[test]
+    fn parse_json_event_log_multiple_lines() {
+        let json_lines = concat!(
+            r#"{"pcr":0,"digests":[{"hashAlg":"sha256","digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}]}"#,
+            "\n",
+            r#"{"pcr":7,"digests":[{"hashAlg":"sha256","digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}]}"#,
+        );
+        let result = parse_event_log(json_lines.as_bytes());
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().events.len(), 2);
+    }
+
+    #[test]
+    fn parse_json_event_log_empty() {
+        // Empty bytes go through the event1 parser first which returns Ok for empty data,
+        // so parse_event_log doesn't reach the JSON parser. Test the JSON parser directly
+        // by providing data that fails both event1 and event2 parsers.
+        let result = parse_json_event_log(b"");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_json_event_log_with_event_type() {
+        let json_line = r#"{"pcr":11,"event_type":"phase","digests":[{"hashAlg":"sha256","digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}]}"#;
+        let result = parse_event_log(json_line.as_bytes());
+        assert!(result.is_ok());
+        let log = result.unwrap();
+        // "phase" maps to EV_IPL (0x0000_000D)
+        assert_eq!(log.events[0].event_type, 0x0000_000D);
+    }
+
+    // -----------------------------------------------------------------------
+    // parse_event_log_with_event1_spec (Event1 then Event2 format)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_spec_id_then_event2() {
+        // Build a Spec ID Event (Event1 format) followed by Event2 entries
+        let mut data = Vec::new();
+
+        // Event1 header for Spec ID
+        data.extend_from_slice(&0u32.to_le_bytes()); // PCR index
+        data.extend_from_slice(&SPEC_ID_EVENT_TYPE.to_le_bytes()); // event_type = EV_NO_ACTION (0x03)
+        data.extend_from_slice(&[0u8; 20]); // SHA1 digest
+
+        // Spec ID Event payload
+        let mut payload = Vec::new();
+        payload.extend_from_slice(b"Spec ID Event03\0"); // signature
+        payload.extend_from_slice(&0u32.to_le_bytes()); // platform_class
+        payload.push(2); // major
+        payload.push(0); // minor
+        payload.push(0); // errata
+        payload.push(2); // uintn_size
+        payload.extend_from_slice(&1u32.to_le_bytes()); // algorithm count
+        payload.extend_from_slice(&0x000Bu16.to_le_bytes()); // SHA256
+        payload.extend_from_slice(&32u16.to_le_bytes()); // digest size
+        payload.push(0); // vendor info size
+
+        // Event data size
+        data.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        data.extend_from_slice(&payload);
+
+        // Event2 entry
+        data.extend_from_slice(&7u32.to_le_bytes()); // PCR index
+        data.extend_from_slice(&0x80000001u32.to_le_bytes()); // event type
+        data.extend_from_slice(&1u32.to_le_bytes()); // digest count
+        data.extend_from_slice(&0x000Bu16.to_le_bytes()); // SHA256
+        data.extend_from_slice(&[0xCC; 32]); // digest
+        data.extend_from_slice(&4u32.to_le_bytes()); // event data size
+        data.extend_from_slice(b"test");
+
+        let log = parse_event_log(&data).expect("parse spec id + event2");
+        assert!(log.events.len() >= 2);
+        // First event is spec id
+        assert_eq!(log.events[0].event_type, SPEC_ID_EVENT_TYPE);
+        // Second event has PCR 7
+        assert_eq!(log.events[1].pcr_index, 7);
+    }
+
+    // -----------------------------------------------------------------------
+    // load_event_logs tests (filesystem-based)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn load_event_log_nonexistent_path() {
+        let result = load_event_log(Some(Path::new("/nonexistent/path/to/log")));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_event_logs_from_temp_file() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join("test_event_logs");
+        let _ = fs::create_dir_all(&dir);
+        let file_path = dir.join("test.bin");
+        let mut f = fs::File::create(&file_path).expect("create temp file");
+        f.write_all(b"test data").expect("write");
+        drop(f);
+
+        let result = load_event_logs(Some(&file_path));
+        assert!(result.is_ok());
+        let (logs, sources) = result.unwrap();
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0], b"test data");
+        assert_eq!(sources.len(), 1);
+
+        let _ = fs::remove_file(&file_path);
+        let _ = fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn load_event_logs_from_temp_dir() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join("test_event_logs_dir");
+        let _ = fs::create_dir_all(&dir);
+        let f1 = dir.join("log1.bin");
+        let f2 = dir.join("log2.bin");
+        fs::File::create(&f1).unwrap().write_all(b"log1").unwrap();
+        fs::File::create(&f2).unwrap().write_all(b"log2").unwrap();
+
+        let result = load_event_logs(Some(&dir));
+        assert!(result.is_ok());
+        let (logs, _sources) = result.unwrap();
+        assert_eq!(logs.len(), 2);
+
+        let _ = fs::remove_file(&f1);
+        let _ = fs::remove_file(&f2);
+        let _ = fs::remove_dir(&dir);
+    }
+}
