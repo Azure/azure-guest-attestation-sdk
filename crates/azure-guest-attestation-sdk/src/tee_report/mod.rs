@@ -151,7 +151,7 @@ mod tests {
         // Should have multiple indented lines
         let lines: Vec<&str> = out.lines().collect();
         assert!(lines.len() >= 3); // header + at least 2 data lines
-        // Each data line should be indented with 4 spaces
+                                   // Each data line should be indented with 4 spaces
         for line in &lines[1..] {
             assert!(line.starts_with("    "));
         }

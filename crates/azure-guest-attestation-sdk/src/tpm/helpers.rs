@@ -346,10 +346,7 @@ mod tests {
         // Size placeholder = 0
         assert_eq!(&buf[2..6], &[0u8; 4]);
         // Command code = PcrRead (0x0000017E)
-        assert_eq!(
-            &buf[6..10],
-            &(TpmCommandCode::PcrRead as u32).to_be_bytes()
-        );
+        assert_eq!(&buf[6..10], &(TpmCommandCode::PcrRead as u32).to_be_bytes());
     }
 
     // -----------------------------------------------------------------------
@@ -364,10 +361,7 @@ mod tests {
         // Tag = TPM_ST_SESSIONS (0x8002)
         assert_eq!(&buf[0..2], &TPM_ST_SESSIONS.to_be_bytes());
         // Command code = Quote (0x00000158)
-        assert_eq!(
-            &buf[6..10],
-            &(TpmCommandCode::Quote as u32).to_be_bytes()
-        );
+        assert_eq!(&buf[6..10], &(TpmCommandCode::Quote as u32).to_be_bytes());
     }
 
     // -----------------------------------------------------------------------
@@ -442,8 +436,7 @@ mod tests {
     #[test]
     fn build_command_pw_sessions_empty_auth() {
         let handle: u32 = 0x80000000;
-        let cmd =
-            build_command_pw_sessions(TpmCommandCode::Quote, &[handle], &[&[]], |_| {});
+        let cmd = build_command_pw_sessions(TpmCommandCode::Quote, &[handle], &[&[]], |_| {});
         // 10 (header) + 4 (handle) + 4 (auth area size) + 9 (pw session: 4+2+1+2+0) = 27
         assert_eq!(cmd.len(), 27);
         assert_eq!(&cmd[0..2], &TPM_ST_SESSIONS.to_be_bytes());
@@ -467,12 +460,8 @@ mod tests {
     #[test]
     fn build_command_pw_sessions_with_auth_value() {
         let auth = [0x01, 0x02, 0x03, 0x04];
-        let cmd = build_command_pw_sessions(
-            TpmCommandCode::Unseal,
-            &[0x80000001],
-            &[&auth],
-            |_| {},
-        );
+        let cmd =
+            build_command_pw_sessions(TpmCommandCode::Unseal, &[0x80000001], &[&auth], |_| {});
         // 10 + 4 + 4 + (4+2+1+2+4) = 31
         assert_eq!(cmd.len(), 31);
         // Auth area size = 4+2+1+2+4 = 13

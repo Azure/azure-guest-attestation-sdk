@@ -1031,10 +1031,7 @@ mod tests {
 
     #[test]
     fn event_type_known_types() {
-        assert_eq!(
-            event_type_description(0x00000000),
-            Some("EV_PREBOOT_CERT")
-        );
+        assert_eq!(event_type_description(0x00000000), Some("EV_PREBOOT_CERT"));
         assert_eq!(event_type_description(0x00000004), Some("EV_SEPARATOR"));
         assert_eq!(
             event_type_description(0x80000001),
@@ -1104,7 +1101,7 @@ mod tests {
         data.push(0); // minor
         data.push(0); // errata
         data.push(2); // uintn_size
-        // Algorithm count = 1
+                      // Algorithm count = 1
         data.extend_from_slice(&1u32.to_le_bytes());
         // Algorithm: SHA256 (0x000B), size 32
         data.extend_from_slice(&0x000Bu16.to_le_bytes());
@@ -1176,7 +1173,12 @@ mod tests {
     // parse_event_log (Event1 format) tests
     // -----------------------------------------------------------------------
 
-    fn build_event1_entry(pcr: u32, event_type: u32, sha1_digest: &[u8; 20], data: &[u8]) -> Vec<u8> {
+    fn build_event1_entry(
+        pcr: u32,
+        event_type: u32,
+        sha1_digest: &[u8; 20],
+        data: &[u8],
+    ) -> Vec<u8> {
         let mut buf = Vec::new();
         buf.extend_from_slice(&pcr.to_le_bytes());
         buf.extend_from_slice(&event_type.to_le_bytes());
@@ -1340,7 +1342,11 @@ mod tests {
     fn parse_json_event_log_basic() {
         let json_line = r#"{"pcr":11,"digests":[{"hashAlg":"sha256","digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}]}"#;
         let result = parse_event_log(json_line.as_bytes());
-        assert!(result.is_ok(), "parse_event_log should succeed for JSON format: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "parse_event_log should succeed for JSON format: {:?}",
+            result.err()
+        );
         let log = result.unwrap();
         assert_eq!(log.events.len(), 1);
         assert_eq!(log.events[0].pcr_index, 11);
