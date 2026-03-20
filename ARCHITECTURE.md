@@ -18,7 +18,7 @@ The SDK is organized as a Cargo workspace with two members:
 │  Application / CLI                                      │
 ├─────────────────────────────────────────────────────────┤
 │  AttestationClient                                      │
-│    .attest()  .attest_platform()  .decrypt_token()      │
+│    .attest_guest()  .attest_platform()  .decrypt_token() │
 │    .get_cvm_evidence()  .get_device_evidence()          │
 │    .get_endorsement()   .create_attestation_report()    │
 ├─────────────────────────────────────────────────────────┤
@@ -34,22 +34,23 @@ The SDK is organized as a Cargo workspace with two members:
 
 | Level | Entry point | Description |
 |-------|------------|-------------|
-| **High** | `AttestationClient::attest` | One-shot: collect evidence → build report → submit → token |
+| **High** | `AttestationClient::attest_guest` | One-shot: collect evidence → build report → submit → token |
 | **Mid** | `get_cvm_evidence`, `get_device_evidence`, `create_attestation_report` | Collect and assemble artifacts separately |
 | **Low** | `tpm`, `tee_report`, `report` | Direct TPM commands, TEE report parsing |
 | **Parse** | `parse` module | Stateless parsing of reports, quotes, and tokens |
 
 ### Attestation Flow (decomposed)
 
-`AttestationClient::attest()` is the highest-level API. Internally it follows
+`AttestationClient::attest_guest()` is the highest-level API. Internally it follows
 these steps, each of which can also be called independently:
 
 ```
-1. OsInfo::detect()            → detect OS, PCR list
+1. Resolve PCR selection    → explicit (AttestOptions::pcr_selection) or OS default
 2. get_cvm_evidence()          → CvmEvidence (TEE report, runtime claims)
                                   Falls back to TrustedLaunch when CVM
                                   report NV index is absent.
-3. get_device_evidence(pcrs)   → DeviceEvidence (TpmInfo + ephemeral key handle)
+3. get_device_evidence(opts)   → DeviceEvidence (TpmInfo + ephemeral key handle)
+                                  DeviceEvidenceOptions selects device type + PCRs
 4. create_attestation_report() → AttestationReport (JSON request body)
 5. submit_to_provider()        → token (with retry + backoff)
 ```
@@ -69,7 +70,10 @@ crates/azure-guest-attestation-sdk/src/
 ├── lib.rs            # Crate root — module declarations, re-exports, tracing init
 ├── client.rs         # AttestationClient, Provider, options & result types
 ├── parse.rs          # Stateless parsing functions (no TPM / network)
-├── guest_attest.rs   # Provider abstractions, submission helpers, attestation types
+├── guest_attest/
+│   ├── mod.rs        # Attestation types, payload builders, TCG log collection
+│   ├── provider.rs   # AttestationProvider trait, MaaProvider, LoopbackProvider
+│   └── imds.rs       # ImdsClient for platform endorsements (VCEK chain, TD Quote)
 ├── report.rs         # CvmAttestationReport, CvmReportType, RuntimeClaims
 ├── tee_report/
 │   ├── mod.rs        # Pretty-print dispatchers
@@ -95,7 +99,7 @@ crates/azure-guest-attestation-sdk/src/
 
 ```rust
 let client = AttestationClient::new()?;
-let result = client.attest(Provider::maa("https://..."), None)?;
+let result = client.attest_guest(Provider::maa("https://..."), None)?;
 ```
 
 For more control, each step can be called independently:
@@ -103,7 +107,10 @@ For more control, each step can be called independently:
 ```rust
 let client = AttestationClient::new()?;
 let cvm_evidence = client.get_cvm_evidence(None)?;
-let device_evidence = client.get_device_evidence(&[0, 1, 2, 7])?;
+let device_evidence = client.get_device_evidence(Some(&DeviceEvidenceOptions {
+    device_type: DeviceType::Tpm,
+    pcr_selection: Some(vec![0, 1, 2, 7]),
+}))?;
 let report = client.create_attestation_report(&device_evidence, Some(&cvm_evidence), None, None)?;
 // submit report.json to your own provider, or use submit_to_provider()
 ```

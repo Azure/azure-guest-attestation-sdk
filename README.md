@@ -359,7 +359,7 @@ Remove-Item Env:AZURE_GUEST_ATTESTATION_LOG
 
 ## Development Notes
 
-* `AttestationClient::attest()` internally decomposes into `get_cvm_evidence()` → `get_device_evidence()` → `create_attestation_report()` → `submit_to_provider()`, each callable independently.
+* `AttestationClient::attest_guest()` internally decomposes into `get_cvm_evidence()` → `get_device_evidence()` → `create_attestation_report()` → `submit_to_provider()`, each callable independently.
 * Attestation provider abstraction supports loopback & MAA; future providers can implement the `AttestationProvider` trait.
 * Submission helpers (`submit_to_provider`, `submit_tee_only`) include retry logic with exponential backoff.
 * Tool (`azure-guest-attest`) serves as a reference usage + regression harness.

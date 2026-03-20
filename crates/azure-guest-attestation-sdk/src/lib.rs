@@ -20,7 +20,7 @@
 //! let client = AttestationClient::new()?;
 //!
 //! // One-shot attestation against MAA
-//! let result = client.attest(
+//! let result = client.attest_guest(
 //!     Provider::maa("https://sharedeus.eus.attest.azure.net/attest/SevSnpVm"),
 //!     None,
 //! )?;
@@ -33,7 +33,7 @@
 //!
 //! | Level | Entry point | Description |
 //! |-------|------------|-------------|
-//! | **High** | [`AttestationClient::attest`] | One-shot: collect evidence → build report → submit → token |
+//! | **High** | [`AttestationClient::attest_guest`] | One-shot: collect evidence → build report → submit → token |
 //! | **Mid** | [`AttestationClient::get_cvm_evidence`], [`get_device_evidence`](AttestationClient::get_device_evidence), [`create_attestation_report`](AttestationClient::create_attestation_report) | Collect and assemble artifacts separately |
 //! | **Low** | [`tpm`], [`tee_report`], [`report`] | Direct TPM commands, TEE report parsing |
 //! | **Parse** | [`parse`] | Stateless parsing of reports, quotes, and tokens |
@@ -51,7 +51,8 @@ pub mod tpm;
 // ---- Re-exports: primary public API at crate root -------------------------
 pub use client::{
     AttestOptions, AttestResult, AttestationClient, AttestationReport, CvmEvidence,
-    CvmEvidenceOptions, DeviceEvidence, Endorsement, EndorsementKind, Provider,
+    CvmEvidenceOptions, DeviceEvidence, DeviceEvidenceOptions, DeviceType, Endorsement,
+    EndorsementKind, Provider,
 };
 pub use parse::TokenClaims;
 

@@ -18,7 +18,7 @@
 //! let client = AttestationClient::new()?;
 //!
 //! // One-shot attestation against MAA
-//! let result = client.attest(
+//! let result = client.attest_guest(
 //!     Provider::maa("https://sharedeus.eus.attest.azure.net/attest/SevSnpVm"),
 //!     None,
 //! )?;
@@ -64,6 +64,41 @@ impl Provider {
     }
 }
 
+/// Type of device to collect evidence from.
+///
+/// Currently only TPM is supported; additional device types (e.g. vTPM,
+/// GPU attestation) may be added in the future.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DeviceType {
+    /// Trusted Platform Module (hardware or firmware TPM).
+    Tpm,
+}
+
+/// Options for [`AttestationClient::get_device_evidence`].
+///
+/// The `Default` implementation selects [`DeviceType::Tpm`] with OS-default
+/// PCR selection.
+#[derive(Debug, Clone)]
+pub struct DeviceEvidenceOptions {
+    /// Which device to collect evidence from.
+    pub device_type: DeviceType,
+    /// PCR indices to include in the quote.
+    ///
+    /// When `None`, the OS-specific default set is used
+    /// (see [`OsInfo::detect`](crate::guest_attest::OsInfo::detect)).
+    pub pcr_selection: Option<Vec<u32>>,
+}
+
+impl Default for DeviceEvidenceOptions {
+    fn default() -> Self {
+        Self {
+            device_type: DeviceType::Tpm,
+            pcr_selection: None,
+        }
+    }
+}
+
 /// Which kind of endorsement to retrieve from the platform metadata service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EndorsementKind {
@@ -84,12 +119,17 @@ pub struct CvmEvidenceOptions {
     pub fetch_platform_quote: bool,
 }
 
-/// Options for [`AttestationClient::attest`].
+/// Options for [`AttestationClient::attest_guest`].
 #[derive(Debug, Clone, Default)]
 pub struct AttestOptions {
     /// Client-supplied key/value payload to include in the attestation request.
     /// Each value will be base64-encoded in the outgoing JSON.
     pub client_payload: Option<String>,
+    /// PCR indices to include in the quote.
+    ///
+    /// When `None`, the OS-specific default set is used
+    /// (see [`OsInfo::detect`](crate::guest_attest::OsInfo::detect)).
+    pub pcr_selection: Option<Vec<u32>>,
 }
 
 /// TEE evidence collected from the CVM hardware.
@@ -263,20 +303,39 @@ impl AttestationClient {
         })
     }
 
-    /// Collect TPM device evidence: AK cert/pub, PCR quote + values, ephemeral key.
+    /// Collect device evidence: AK cert/pub, PCR quote + values, ephemeral key.
     ///
     /// The returned [`DeviceEvidence`] contains the serializable [`TpmInfo`]
     /// (for the guest attestation JSON request) and the ephemeral key handle
     /// needed later for token decryption.
-    pub fn get_device_evidence(&self, pcrs: &[u32]) -> io::Result<DeviceEvidence> {
+    ///
+    /// Pass `None` for `options` to use the default device (TPM) with
+    /// OS-default PCR selection.
+    pub fn get_device_evidence(
+        &self,
+        options: Option<&DeviceEvidenceOptions>,
+    ) -> io::Result<DeviceEvidence> {
+        let opts = options.cloned().unwrap_or_default();
+        match opts.device_type {
+            DeviceType::Tpm => self.get_tpm_evidence(opts.pcr_selection.as_deref()),
+        }
+    }
+
+    /// Internal: collect evidence from the platform TPM.
+    fn get_tpm_evidence(&self, pcr_selection: Option<&[u32]>) -> io::Result<DeviceEvidence> {
+        let pcrs = match pcr_selection {
+            Some(p) => p.to_vec(),
+            None => OsInfo::detect()?.pcr_list,
+        };
+
         attestation::ensure_persistent_ak(&self.tpm)?;
 
         let ak_cert = attestation::get_ak_cert(&self.tpm)?;
         let ak_pub = attestation::get_ak_pub(&self.tpm)?;
-        let (quote, sig) = attestation::get_pcr_quote(&self.tpm, pcrs)?;
-        let pcr_values = attestation::get_pcr_values(&self.tpm, pcrs)?;
+        let (quote, sig) = attestation::get_pcr_quote(&self.tpm, &pcrs)?;
+        let pcr_values = attestation::get_pcr_values(&self.tpm, &pcrs)?;
         let (enc_key_pub, handle_bytes, enc_key_certify_info, enc_key_certify_info_sig) =
-            attestation::get_ephemeral_key(&self.tpm, pcrs)?;
+            attestation::get_ephemeral_key(&self.tpm, &pcrs)?;
 
         let eph_handle = if handle_bytes.len() >= 4 {
             Some(u32::from_be_bytes([
@@ -311,7 +370,7 @@ impl AttestationClient {
                 enc_key_certify_info_sig,
             },
             ephemeral_key_handle: eph_handle,
-            pcrs: pcrs.to_vec(),
+            pcrs,
         })
     }
 
@@ -342,7 +401,7 @@ impl AttestationClient {
     /// This is a lower-level API for callers who want to collect evidence and
     /// endorsements separately, then assemble the final JSON request body.
     ///
-    /// Most callers should use [`attest`](Self::attest) instead.
+    /// Most callers should use [`attest_guest`](Self::attest_guest) instead.
     pub fn create_attestation_report(
         &self,
         device_evidence: &DeviceEvidence,
@@ -397,23 +456,25 @@ impl AttestationClient {
     /// [`IsolationType::TrustedLaunch`]
     /// with no TEE evidence.
     ///
+    /// Use [`AttestOptions::pcr_selection`] to override the default PCR set.
+    ///
     /// # Example
     ///
     /// ```ignore
     /// let client = AttestationClient::new()?;
-    /// let result = client.attest(Provider::maa("https://..."), None)?;
+    /// let result = client.attest_guest(Provider::maa("https://..."), None)?;
     /// println!("{}", result.token.unwrap_or_default());
     /// ```
-    pub fn attest(
+    pub fn attest_guest(
         &self,
         provider: Provider,
         options: Option<&AttestOptions>,
     ) -> io::Result<AttestResult> {
         let mut timer = guest_attest::StageTimer::new();
 
-        // 1. Detect OS and PCR list
-        let os = guest_attest::OsInfo::detect()?;
-        timer.mark("os_detect");
+        // 1. Resolve PCR selection (explicit > OS default)
+        let pcr_selection = options.and_then(|o| o.pcr_selection.clone());
+        timer.mark("resolve_pcrs");
 
         // 2. Try to collect CVM (TEE) evidence.
         //    TrustedLaunch VMs don't have a CVM report NV index, so
@@ -427,8 +488,12 @@ impl AttestationClient {
         };
         timer.mark("cvm_evidence");
 
-        // 3. Collect TPM device evidence (+ ephemeral key handle)
-        let device_evidence = self.get_device_evidence(&os.pcr_list)?;
+        // 3. Collect device evidence (+ ephemeral key handle)
+        let dev_opts = DeviceEvidenceOptions {
+            device_type: DeviceType::Tpm,
+            pcr_selection,
+        };
+        let device_evidence = self.get_device_evidence(Some(&dev_opts))?;
         timer.mark("device_evidence");
 
         // 4. Build the attestation report (request JSON)
@@ -496,7 +561,7 @@ impl AttestationClient {
     ///
     /// The `token_b64url` should be the base64url-encoded token returned by
     /// the provider. The `ephemeral_key_handle` and `pcrs` should come from
-    /// the [`AttestResult`] of the corresponding [`attest`](Self::attest) call.
+    /// the [`AttestResult`] of the corresponding [`attest_guest`](Self::attest_guest) call.
     pub fn decrypt_token(
         &self,
         ephemeral_key_handle: u32,
@@ -623,6 +688,23 @@ mod tests {
     fn attest_options_default() {
         let opts = AttestOptions::default();
         assert!(opts.client_payload.is_none());
+        assert!(opts.pcr_selection.is_none());
+    }
+
+    #[test]
+    fn device_type_tpm_default() {
+        let opts = DeviceEvidenceOptions::default();
+        assert_eq!(opts.device_type, DeviceType::Tpm);
+        assert!(opts.pcr_selection.is_none());
+    }
+
+    #[test]
+    fn device_evidence_options_with_pcrs() {
+        let opts = DeviceEvidenceOptions {
+            device_type: DeviceType::Tpm,
+            pcr_selection: Some(vec![0, 1, 7]),
+        };
+        assert_eq!(opts.pcr_selection.as_ref().unwrap(), &[0, 1, 7]);
     }
 
     #[test]

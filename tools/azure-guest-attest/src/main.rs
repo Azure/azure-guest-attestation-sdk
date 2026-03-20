@@ -18,9 +18,6 @@ use anyhow::bail;
 use anyhow::Context;
 
 // Import functions from their module paths (root no longer re-exports many helpers)
-use azure_guest_attestation_sdk::guest_attest::{
-    AttestationProvider, LoopbackProvider, MaaProvider,
-};
 use azure_guest_attestation_sdk::tee_report::td_quote::{
     parse_td_quote_with_options, pretty_td_quote, ParsedTdQuote, TdQuoteBody, TdQuoteCertification,
     TdQuoteEcdsaNestedCertification, TdQuotePckCertChain, TdQuoteSignatureMode,
@@ -1026,32 +1023,27 @@ fn main() -> anyhow::Result<()> {
             show_request,
         } => {
             let tpm = Tpm::open().map_err(|e| anyhow::anyhow!("Failed to open TPM: {e}"))?;
-            // Provider selection
-            let prov_box: Box<dyn AttestationProvider> = match provider.as_str() {
-                "loopback" => Box::new(LoopbackProvider),
-                "maa" => Box::new(MaaProvider::new(endpoint.clone())),
+            // Build provider enum
+            let prov = match provider.as_str() {
+                "loopback" => azure_guest_attestation_sdk::client::Provider::Loopback,
+                "maa" => azure_guest_attestation_sdk::client::Provider::maa(endpoint.clone()),
                 other => return Err(anyhow::anyhow!("Unknown provider: {other}")),
             };
-            // Run attestation with raw client payload string (validated/encoded internally)
-            let result = azure_guest_attestation_sdk::guest_attest::attest_guest(
-                &tpm,
-                Some(prov_box.as_ref()),
-                Some(&client_payload),
-            )?;
+            let client = azure_guest_attestation_sdk::client::AttestationClient::from_tpm(tpm);
+            let opts = azure_guest_attestation_sdk::client::AttestOptions {
+                client_payload: Some(client_payload.clone()),
+                ..Default::default()
+            };
+            let result = client.attest_guest(prov, Some(&opts))?;
             if show_request {
                 writeln!(writer, "Request JSON:\n{}", result.request_json)?;
             }
-            if let Some(tok) = &result.token_b64url {
+            if let Some(tok) = &result.token {
                 writeln!(writer, "Token (raw/envelope b64url): {tok}")?;
                 if decode {
                     // Try envelope decrypt first if we retained ephemeral handle
                     if let Some(h) = result.ephemeral_key_handle {
-                        match azure_guest_attestation_sdk::guest_attest::parse_token(
-                            &tpm,
-                            h,
-                            &result.pcrs,
-                            tok,
-                        ) {
+                        match client.decrypt_token(h, &result.pcrs, tok) {
                             Ok(Some(inner_jwt)) => {
                                 writeln!(writer, "Decrypted JWT:")?;
                                 decode_and_print_jwt(&inner_jwt, &mut *writer)?;

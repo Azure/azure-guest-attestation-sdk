@@ -1,40 +1,51 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Guest attestation types, provider abstractions, and submission helpers.
+//! Guest attestation payload types, serialization, and helpers.
 //!
 //! This module provides the building blocks for guest attestation on Azure VMs
 //! (both CVM and TrustedLaunch):
 //!
 //! - **Types**: `GuestAttestationParameters`, `TpmInfo`, `IsolationInfo`, etc.
-//! - **Providers**: `AttestationProvider` trait, `MaaProvider`, `LoopbackProvider`
-//! - **Submission**: `submit_to_provider()` (with retry), `submit_tee_only()`
 //! - **Payload builders**: `build_tee_only_payload_from_evidence()`
-//! - **Convenience**: `attest_guest()` — one-shot orchestration (auto-detects
-//!   TrustedLaunch vs CVM)
-//! - **Utilities**: `collect_tcg_logs()`, `base64_url_encode/decode()`
+//! - **Utilities**: `collect_tcg_logs()`, `base64_url_encode/decode()`, `parse_token()`
+//!
+//! ## Sub-modules
+//!
+//! - [`provider`] — `AttestationProvider` trait, `MaaProvider`, `LoopbackProvider`
+//! - [`imds`] — `ImdsClient` for platform endorsements (VCEK chain, TD Quote)
 //!
 //! Most callers should use [`crate::client::AttestationClient`] which composes
 //! these primitives into a clean layered API.
 
-use crate::tpm::attestation::{
-    get_ak_cert, get_ak_pub, get_ephemeral_key, get_pcr_quote, get_pcr_values,
+pub mod imds;
+pub mod provider;
+
+// Re-export commonly used items at this module level for convenience.
+pub use imds::ImdsClient;
+pub use provider::{
+    submit_tee_only, submit_to_provider, AttestationProvider, LoopbackProvider, MaaProvider,
 };
-use crate::tpm::device::Tpm;
-use base64::Engine; // for encode/decode methods
-use reqwest::blocking::Client;
+
+use base64::Engine;
 use serde::ser::SerializeMap;
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize, Serializer};
-use std::time::Duration;
+use std::io;
 use std::time::Instant;
-use std::{io, thread};
+
+use crate::tpm::device::Tpm;
+
+// ---------------------------------------------------------------------------
+// StageTimer (internal)
+// ---------------------------------------------------------------------------
 
 #[derive(Debug)]
 pub(crate) struct StageTimer {
     start: Instant,
     last: Instant,
 }
+
 impl StageTimer {
     pub(crate) fn new() -> Self {
         let now = Instant::now();
@@ -51,6 +62,10 @@ impl StageTimer {
         tracing::info!(target: "guest_attest", stage = label, stage_ms, total_ms, "attestation timing");
     }
 }
+
+// ---------------------------------------------------------------------------
+// OS information
+// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OsInfo {
@@ -116,6 +131,10 @@ fn parse_version_pair(v: &str) -> (u32, u32) {
     (maj, min)
 }
 
+// ---------------------------------------------------------------------------
+// Isolation / TEE types
+// ---------------------------------------------------------------------------
+
 #[derive(Debug, Clone, Serialize)]
 pub enum IsolationType {
     SevSnp,
@@ -139,7 +158,7 @@ pub struct IsolationEvidence {
     pub runtime_data: Vec<u8>,
 }
 
-// Tee proof types (subset for SNP + TDX)
+/// TEE proof types (subset for SNP + TDX).
 #[derive(Debug, Clone)]
 pub enum TeeProof {
     Snp {
@@ -169,7 +188,6 @@ impl Serialize for TeeProof {
                 state.end()
             }
             TeeProof::Tdx { td_quote } => {
-                // Just serialize as raw byte array
                 let td_quote_b64 = base64::engine::general_purpose::STANDARD.encode(td_quote);
                 td_quote_b64.serialize(serializer)
             }
@@ -177,7 +195,10 @@ impl Serialize for TeeProof {
     }
 }
 
-// Helper base64 (standard) serializer for binary fields.
+// ---------------------------------------------------------------------------
+// Serde helpers
+// ---------------------------------------------------------------------------
+
 fn as_b64<S>(data: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
@@ -186,7 +207,6 @@ where
     serializer.serialize_str(&s)
 }
 
-// Helper base64 (standard) serializer for String fields.
 fn str_as_b64<S>(str: &str, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
@@ -195,12 +215,12 @@ where
     serializer.serialize_str(&s)
 }
 
-/// Client payload stored as raw JSON string (object). At serialization we parse and base64 encode each value.
+/// Client payload stored as raw JSON string (object). At serialization we
+/// parse and base64 encode each value.
 fn client_payload_b64<S>(raw: &str, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
-    // Empty or whitespace -> empty object
     if raw.trim().is_empty() {
         let map = serializer.serialize_map(Some(0))?;
         return map.end();
@@ -216,7 +236,6 @@ where
     let obj = v.as_object().unwrap();
     let mut m = serializer.serialize_map(Some(obj.len()))?;
     for (k, v) in obj.iter() {
-        // Convert any JSON value to string then base64 encode bytes of that string (consistent approach)
         let val_str = if v.is_string() {
             v.as_str().unwrap().to_string()
         } else {
@@ -227,6 +246,10 @@ where
     }
     m.end()
 }
+
+// ---------------------------------------------------------------------------
+// TPM / attestation parameter types
+// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PcrEntry {
@@ -246,10 +269,8 @@ pub struct TpmInfo {
     pub pcr_quote: Vec<u8>,
     #[serde(rename = "PcrSignature", serialize_with = "as_b64")]
     pub pcr_sig: Vec<u8>,
-    // Set of PCR indices included in quote
     #[serde(rename = "PcrSet")]
     pub pcr_set: Vec<u32>,
-    // Structured list of PCR index + digest pairs
     #[serde(rename = "PCRs")]
     pub pcrs: Vec<PcrEntry>,
     #[serde(rename = "EncKeyPub", serialize_with = "as_b64")]
@@ -290,242 +311,6 @@ impl GuestAttestationParameters {
     }
 }
 
-/// Attestation provider abstraction (placeholder)
-pub trait AttestationProvider {
-    fn attest_guest(&self, encoded_request: &str) -> io::Result<Option<String>>; // returns base64url encoded token
-}
-
-/// Dummy provider that echoes back the request embedded in a JSON token.
-pub struct LoopbackProvider;
-impl AttestationProvider for LoopbackProvider {
-    fn attest_guest(&self, encoded_request: &str) -> io::Result<Option<String>> {
-        let token = serde_json::json!({"loopback": true, "request": encoded_request});
-        Ok(Some(base64_url_encode(token.to_string().as_bytes())))
-    }
-}
-
-/// Microsoft Azure Attestation (MAA) provider implementation.
-/// Posts the base64url encoded request as JSON to a supplied endpoint and expects
-/// a JWT token string (MAA) in response under field "token" OR raw body if JSON parse fails.
-pub struct MaaProvider {
-    client: Client,
-    endpoint: String,
-}
-
-impl MaaProvider {
-    pub fn new(endpoint: impl Into<String>) -> Self {
-        // Build a blocking client with extended timeout (5 minutes) to accommodate
-        // potentially slow MAA attestation responses.
-        let client = Client::builder()
-            .timeout(Duration::from_secs(300))
-            .build()
-            .unwrap_or_else(|e| {
-                tracing::warn!(target: "guest_attest", error=%e, "MAA Client builder failed, falling back to default client");
-                Client::new()
-            });
-        Self {
-            client,
-            endpoint: endpoint.into(),
-        }
-    }
-}
-
-impl AttestationProvider for MaaProvider {
-    fn attest_guest(&self, encoded_request: &str) -> io::Result<Option<String>> {
-        let body = serde_json::json!({"AttestationInfo": encoded_request});
-        // Build the request first so we can log headers before sending.
-        let req = self
-            .client
-            .post(&self.endpoint)
-            .json(&body)
-            .build()
-            .map_err(|e| io::Error::other(format!("maa build request: {e}")))?;
-        // Trace request headers (redact Authorization if ever present).
-        for (k, v) in req.headers().iter() {
-            if k.as_str().eq_ignore_ascii_case("authorization") {
-                tracing::info!(target = "guest_attest", provider = "MAA", endpoint = %self.endpoint, header = %k.as_str(), value = "<redacted>");
-            } else {
-                let val = v.to_str().unwrap_or("<non-utf8>");
-                tracing::info!(target = "guest_attest", provider = "MAA", endpoint = %self.endpoint, header = %k.as_str(), value = %val);
-            }
-        }
-        let resp = self
-            .client
-            .execute(req)
-            .map_err(|e| io::Error::other(format!("maa http error: {e}")))?;
-        let status = resp.status();
-        // Trace response headers before consuming body (redact sensitive values)
-        for (k, v) in resp.headers().iter() {
-            let name = k.as_str();
-            if name.eq_ignore_ascii_case("authorization") || name.eq_ignore_ascii_case("set-cookie")
-            {
-                tracing::info!(target = "guest_attest", provider = "MAA", endpoint = %self.endpoint, response_header = %name, value = "<redacted>");
-            } else {
-                let val = v.to_str().unwrap_or("<non-utf8>");
-                tracing::info!(target = "guest_attest", provider = "MAA", endpoint = %self.endpoint, response_header = %name, value = %val);
-            }
-        }
-        let text = resp
-            .text()
-            .map_err(|e| io::Error::other(format!("maa read body: {e}")))?;
-        if !status.is_success() {
-            return Err(io::Error::other(format!(
-                "MAA status {status} body: {text}"
-            )));
-        }
-
-        // Try to parse JSON {"token":"..."}
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-            if let Some(tok) = v.get("token").and_then(|t| t.as_str()) {
-                return Ok(Some(tok.to_string()));
-            }
-        }
-        // Fallback: assume body is already a token.
-        Ok(Some(text))
-    }
-}
-
-/// Subset IMDS client (SNP VCEK chain + TDX quote). Network errors -> io::Error.
-pub struct ImdsClient {
-    http: Client,
-}
-impl ImdsClient {
-    pub fn new() -> Self {
-        Self {
-            http: Client::new(),
-        }
-    }
-    fn get_json(&self, url: &str) -> io::Result<serde_json::Value> {
-        let resp = self
-            .http
-            .get(url)
-            .header("Metadata", "true")
-            .send()
-            .map_err(|e| io::Error::other(format!("http error: {e}")))?;
-        let status = resp.status();
-        if !status.is_success() {
-            return Err(io::Error::other(format!("status {status}")));
-        }
-        let v = resp
-            .json::<serde_json::Value>()
-            .map_err(|e| io::Error::other(format!("json error: {e}")))?;
-        Ok(v)
-    }
-    pub fn get_vcek_chain(&self) -> io::Result<Vec<u8>> {
-        const THIM_ENDPOINT: &str = "http://169.254.169.254/metadata/THIM/amd/certification";
-        let v = self.get_json(THIM_ENDPOINT)?;
-        let vcek = v.get("vcekCert").and_then(|x| x.as_str()).unwrap_or("");
-        let chain = v
-            .get("certificateChain")
-            .and_then(|x| x.as_str())
-            .unwrap_or("");
-        Ok(format!("{vcek}{chain}").into_bytes())
-    }
-    pub fn get_td_quote(&self, report: &[u8]) -> io::Result<Vec<u8>> {
-        use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
-        const TDQUOTE_ENDPOINT: &str = "http://169.254.169.254/acc/tdquote";
-        // Trim to canonical TDX report size expected by IMDS
-        let needed = crate::report::TDX_VM_REPORT_SIZE;
-        if report.len() < needed {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!(
-                    "tdx report buffer too small: have {} need {}",
-                    report.len(),
-                    needed
-                ),
-            ));
-        }
-        let rep = &report[..needed];
-
-        // First attempt: standard base64 with padding
-        let std_b64 = STANDARD.encode(rep);
-        let body_std = serde_json::json!({"report": std_b64});
-        let resp_std = self
-            .http
-            .post(TDQUOTE_ENDPOINT)
-            .header("Metadata", "true")
-            .json(&body_std)
-            .send()
-            .map_err(|e| io::Error::other(format!("tdquote http (std b64) error: {e}")))?;
-        let status_std = resp_std.status();
-        let text_std = resp_std.text().unwrap_or_default();
-        if status_std.is_success() {
-            // Parse JSON and decode quote
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text_std) {
-                if let Some(quote_enc) = v.get("quote").and_then(|x| x.as_str()) {
-                    // Decode quote (standard first then URL safe fallback)
-                    if let Ok(bytes) = STANDARD.decode(quote_enc.as_bytes()) {
-                        return Ok(bytes);
-                    }
-                    if let Ok(bytes) = URL_SAFE_NO_PAD.decode(quote_enc.as_bytes()) {
-                        return Ok(bytes);
-                    }
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "unable to base64 decode returned quote",
-                    ));
-                }
-            }
-            return Err(io::Error::other(format!(
-                "tdquote success status but missing/invalid JSON: {text_std}"
-            )));
-        }
-
-        // Fallback attempt: URL safe no pad (some older docs/examples)
-        let url_b64 = URL_SAFE_NO_PAD.encode(rep);
-        let body_url = serde_json::json!({"report": url_b64});
-        let resp_url = self
-            .http
-            .post(TDQUOTE_ENDPOINT)
-            .header("Metadata", "true")
-            .json(&body_url)
-            .send()
-            .map_err(|e| io::Error::other(format!("tdquote http (url b64) error: {e}")))?;
-        let status_url = resp_url.status();
-        let text_url = resp_url.text().unwrap_or_default();
-        if status_url.is_success() {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text_url) {
-                if let Some(quote_enc) = v.get("quote").and_then(|x| x.as_str()) {
-                    if let Ok(bytes) = STANDARD.decode(quote_enc.as_bytes()) {
-                        return Ok(bytes);
-                    }
-                    if let Ok(bytes) = URL_SAFE_NO_PAD.decode(quote_enc.as_bytes()) {
-                        return Ok(bytes);
-                    }
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "unable to base64 decode returned quote (fallback)",
-                    ));
-                }
-            }
-            return Err(io::Error::other(format!(
-                "tdquote fallback success status but missing/invalid JSON: {text_url}"
-            )));
-        }
-
-        Err(io::Error::other(format!("tdquote failed (std status {status_std}, fallback status {status_url}) std_body='{text_std}' fallback_body='{text_url}'")))
-    }
-}
-
-impl Default for ImdsClient {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Base64url (no padding) encode.
-pub fn base64_url_encode(data: &[u8]) -> String {
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data)
-}
-
-/// Base64url (no padding) decode.
-pub fn base64_url_decode(s: &str) -> io::Result<Vec<u8>> {
-    base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(s.as_bytes())
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("b64 decode: {e}")))
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AttestCvmResult {
     pub request_json: String,
@@ -548,8 +333,12 @@ pub struct TeeOnlyRequest {
     pub report_type: String,
 }
 
-/// Build a TEE-only JSON payload from pre-collected [`CvmEvidence`](crate::client::CvmEvidence)
-/// and an optional endorsement.
+// ---------------------------------------------------------------------------
+// TEE-only payload builders
+// ---------------------------------------------------------------------------
+
+/// Build a TEE-only JSON payload from pre-collected
+/// [`CvmEvidence`](crate::client::CvmEvidence) and an optional endorsement.
 ///
 /// Returns `(payload_json_string, report_type)`. The caller is responsible for
 /// submitting this payload to the appropriate MAA platform endpoint.
@@ -559,7 +348,7 @@ pub fn build_tee_only_payload_from_evidence(
 ) -> io::Result<(String, crate::report::CvmReportType)> {
     use base64::engine::general_purpose::STANDARD;
     let rtype = evidence.report_type;
-    let runtime_data = Vec::new(); // placeholder for future runtime claims extraction
+    let runtime_data = Vec::new();
     let (evidence_field, evidence_bytes) = match rtype {
         crate::report::CvmReportType::SnpVmReport => {
             let vcek_chain = match endorsement {
@@ -596,77 +385,6 @@ pub fn build_tee_only_payload_from_evidence(
         "runtimeData": {"data": STANDARD.encode(&runtime_data), "dataType": "JSON"}
     });
     Ok((payload.to_string(), rtype))
-}
-
-/// Submit a TEE-only JSON payload to a MAA platform endpoint.
-///
-/// Returns `(token_string, request_json)`. If the response body is not JSON
-/// with a `"token"` field the raw body is returned as the token string.
-pub fn submit_tee_only(
-    payload: &str,
-    endpoint: &str,
-    report_type: crate::report::CvmReportType,
-) -> io::Result<String> {
-    let mut timer = StageTimer::new();
-    // Best-effort endpoint / type sanity warnings
-    if report_type == crate::report::CvmReportType::SnpVmReport && !endpoint.contains("SevSnpVm") {
-        tracing::warn!(target: "guest_attest", endpoint, "SNP evidence but endpoint name lacks 'SevSnpVm'");
-    }
-    if report_type == crate::report::CvmReportType::TdxVmReport && !endpoint.contains("TdxVm") {
-        tracing::warn!(target: "guest_attest", endpoint, "TDX evidence but endpoint name lacks 'TdxVm'");
-    }
-    let client = reqwest::blocking::Client::new();
-    tracing::info!(target: "guest_attest", endpoint, "POST tee-only attestation request");
-    let resp = client
-        .post(endpoint)
-        .json(
-            &serde_json::from_str::<serde_json::Value>(payload)
-                .unwrap_or_else(|_| serde_json::json!({})),
-        )
-        .send()
-        .map_err(|e| io::Error::other(format!("http error: {e}")))?;
-    timer.mark("http_post");
-    let status = resp.status();
-    tracing::info!(target: "guest_attest", %status, "tee-only response status");
-    let text = resp.text().unwrap_or_default();
-    timer.mark("read_body");
-    if !status.is_success() {
-        return Err(io::Error::other(format!(
-            "MAA status {status} body: {text}"
-        )));
-    }
-    tracing::info!(target: "guest_attest", body_len = text.len(), "tee-only response body received");
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-        if let Some(tok) = v.get("token").and_then(|x| x.as_str()) {
-            tracing::info!(target: "guest_attest", token_len = tok.len(), "tee-only token extracted");
-            return Ok(tok.to_string());
-        }
-    }
-    tracing::info!(target: "guest_attest", "tee-only raw body treated as token");
-    Ok(text)
-}
-
-/// Perform a TEE-only attestation against a MAA platform endpoint.
-///
-/// **Convenience wrapper** that collects evidence from the TPM, builds the
-/// payload, and submits it. Prefer using the decomposed helpers
-/// ([`build_tee_only_payload_from_evidence`] + [`submit_tee_only`]) when you
-/// already have pre-collected evidence.
-///
-/// Returns `(token_string, request_json)`.
-pub fn tee_only_attest_platform(
-    tpm: &Tpm,
-    endpoint: &str,
-    force_override: Option<crate::report::CvmReportType>,
-) -> io::Result<(String, String)> {
-    let mut timer = StageTimer::new();
-    tracing::info!(target: "guest_attest", endpoint, "tee-only attestation start");
-    let (payload, detected_type) = build_tee_only_payload(tpm)?;
-    timer.mark("build_payload");
-    let eff_type = force_override.unwrap_or(detected_type);
-    tracing::info!(target: "guest_attest", detected = ?detected_type, effective = ?eff_type, payload_len = payload.len(), "tee-only payload built");
-    let token = submit_tee_only(&payload, endpoint, eff_type)?;
-    Ok((token, payload))
 }
 
 /// Gather raw TEE evidence from the TPM. Returns serialized JSON payload
@@ -712,220 +430,44 @@ pub fn build_tee_only_payload(tpm: &Tpm) -> io::Result<(String, crate::report::C
     Ok((payload.to_string(), rtype))
 }
 
-/// Submit a base64url-encoded guest attestation request to a provider with
-/// exponential-backoff retry (up to 3 attempts).
+/// Perform a TEE-only attestation against a MAA platform endpoint.
 ///
-/// Returns the raw base64url-encoded token string (if any) on success.
-pub fn submit_to_provider(
-    encoded_request: &str,
-    provider: &dyn AttestationProvider,
-) -> io::Result<Option<String>> {
-    let max_retries = 3;
-    let mut attempt = 0;
-    let mut last_err: Option<io::Error> = None;
-    let token = loop {
-        match provider.attest_guest(encoded_request) {
-            Ok(t) => break t,
-            Err(e) => {
-                tracing::warn!(target: "guest_attest", attempt = attempt + 1, error = %e, "Provider attest_guest failed; will retry if below max");
-                attempt += 1;
-                if attempt >= max_retries {
-                    last_err = Some(e);
-                    break None;
-                }
-                let delay = 1u64 << (attempt - 1);
-                tracing::info!(target: "guest_attest", attempt, delay_secs = delay, "Retrying provider after backoff");
-                thread::sleep(Duration::from_secs(delay));
-            }
-        }
-    };
-    if token.is_none() {
-        if let Some(e) = last_err {
-            return Err(e);
-        }
-    }
-    Ok(token)
-}
-
-/// High-level guest attestation orchestration.
-///
-/// Collects *all* evidence (TPM artifacts, TCG logs, and — when available —
-/// CVM isolation evidence) and submits the request.
-///
-/// **TrustedLaunch** VMs are automatically detected: when the TPM's CVM
-/// report NV index is absent the function falls back to
-/// [`IsolationType::TrustedLaunch`] with no TEE evidence.
-///
-/// For more control, prefer using [`crate::client::AttestationClient`] which
-/// decomposes evidence collection, report building, and submission into
-/// separate steps.
-pub fn attest_guest(
+/// **Convenience wrapper** that collects evidence from the TPM, builds the
+/// payload, and submits it.
+pub fn tee_only_attest_platform(
     tpm: &Tpm,
-    provider: Option<&dyn AttestationProvider>,
-    client_payload: Option<&str>,
-) -> io::Result<AttestCvmResult> {
-    tracing::info!(target: "guest_attest", "attest-guest start");
+    endpoint: &str,
+    force_override: Option<crate::report::CvmReportType>,
+) -> io::Result<(String, String)> {
     let mut timer = StageTimer::new();
-    let os = OsInfo::detect()?;
-    tracing::info!(target: "guest_attest", os_type = %os.os_type, distro = %os.distro, maj = os.version_major, min = os.version_minor, "os info detected");
-    timer.mark("os_detect");
-
-    // Collect TCG logs (best-effort) similar to Python get_measurements
-    let tcg_logs: Vec<u8> = collect_tcg_logs(&os);
-
-    // Collect TPM artifacts
-    let ak_cert = get_ak_cert(tpm)?;
-    tracing::info!(target: "guest_attest", ak_cert_len = ak_cert.len(), "AK cert fetched");
-    let ak_pub = get_ak_pub(tpm)?;
-    tracing::info!(target: "guest_attest", ak_pub_len = ak_pub.len(), "AK public fetched");
-    let pcrs = os.pcr_list.clone();
-    tracing::info!(target: "guest_attest", pcr_count = pcrs.len(), pcrs = ?pcrs, "PCR list prepared");
-    let (quote, sig) = get_pcr_quote(tpm, &pcrs)?;
-    tracing::info!(target: "guest_attest", quote_len = quote.len(), sig_len = sig.len(), "PCR quote acquired");
-    tracing::debug!(target: "guest_attest", quote_hex = %hex::encode(&quote), "PCR quote raw hex");
-    let pcr_values = get_pcr_values(tpm, &pcrs)?;
-    tracing::info!(target: "guest_attest", pcr_values = pcr_values.len(), "PCR values read");
-    let (enc_key_pub, handle_bytes, enc_key_certify_info, enc_key_certify_info_sig) =
-        get_ephemeral_key(tpm, &pcrs)?;
-    let eph_handle = if handle_bytes.len() >= 4 {
-        Some(u32::from_be_bytes([
-            handle_bytes[0],
-            handle_bytes[1],
-            handle_bytes[2],
-            handle_bytes[3],
-        ]))
-    } else {
-        None
-    };
-    tracing::info!(target: "guest_attest", enc_key_pub_len = enc_key_pub.len(), certify_info_len = enc_key_certify_info.len(), certify_sig_len = enc_key_certify_info_sig.len(), "Ephemeral key created and certified");
-    timer.mark("tpm_artifacts");
-    let pcr_set: Vec<u32> = pcr_values.iter().map(|(i, _)| *i).collect();
-    let pcrs_struct: Vec<PcrEntry> = pcr_values
-        .iter()
-        .map(|(i, d)| PcrEntry {
-            index: *i,
-            digest: d.clone(),
-        })
-        .collect();
-
-    // Hardware evidence — try reading the CVM report.
-    // TrustedLaunch VMs don't have a CVM report NV index; we fall back to
-    // IsolationType::TrustedLaunch with no TEE evidence in that case.
-    let isolation = match crate::tpm::attestation::get_cvm_report_raw(tpm, None) {
-        Ok(raw_report) => {
-            tracing::info!(target: "guest_attest", report_len = raw_report.len(), "CVM report fetched");
-            let (parsed, _claims) =
-                crate::report::CvmAttestationReport::parse_with_runtime_claims(&raw_report)?;
-            tracing::info!(target: "guest_attest", report_type = ?parsed.runtime_claims_header.report_type, tee_report_len = parsed.tee_report.len(), "CVM report parsed");
-            timer.mark("cvm_report");
-            let runtime_data = parsed.get_runtime_claims_raw_bytes(&raw_report)?;
-            let report_type = parsed.runtime_claims_header.report_type;
-            match report_type {
-                crate::report::CvmReportType::SnpVmReport => {
-                    let snp_slice = &parsed.tee_report[..crate::report::SNP_VM_REPORT_SIZE];
-                    let imds = ImdsClient::new();
-                    let vcek_chain = imds.get_vcek_chain()?;
-                    tracing::info!(target: "guest_attest", snp_report_len = snp_slice.len(), vcek_chain_len = vcek_chain.len(), "SNP evidence collected (report + VCEK chain)");
-
-                    IsolationInfo {
-                        vm_type: IsolationType::SevSnp,
-                        evidence: Some(IsolationEvidence {
-                            tee_proof: TeeProof::Snp {
-                                snp_report: snp_slice.to_vec(),
-                                vcek_chain,
-                            },
-                            runtime_data,
-                        }),
-                    }
-                }
-                crate::report::CvmReportType::TdxVmReport => {
-                    let tdx_slice = &parsed.tee_report[..crate::report::TDX_VM_REPORT_SIZE];
-                    let imds = ImdsClient::new();
-                    let td_quote = imds.get_td_quote(tdx_slice)?;
-                    tracing::info!(target: "guest_attest", tdx_report_len = tdx_slice.len(), td_quote_len = td_quote.len(), "TDX evidence collected (report + quote)");
-
-                    IsolationInfo {
-                        vm_type: IsolationType::Tdx,
-                        evidence: Some(IsolationEvidence {
-                            tee_proof: TeeProof::Tdx { td_quote },
-                            runtime_data,
-                        }),
-                    }
-                }
-                rtype => {
-                    return Err(io::Error::other(format!(
-                        "Unsupported CVM report type: {rtype:?}"
-                    )));
-                }
-            }
-        }
-        Err(e) => {
-            // No CVM report NV index → TrustedLaunch VM
-            tracing::info!(target: "guest_attest", error = %e, "No CVM report available, treating as TrustedLaunch");
-            timer.mark("cvm_report_skip");
-            IsolationInfo {
-                vm_type: IsolationType::TrustedLaunch,
-                evidence: None,
-            }
-        }
-    };
-
-    let tpm_info = TpmInfo {
-        ak_cert,
-        ak_pub,
-        pcr_quote: quote,
-        pcr_sig: sig,
-        pcr_set,
-        pcrs: pcrs_struct,
-        enc_key_pub,
-        enc_key_certify_info,
-        enc_key_certify_info_sig,
-    };
-
-    let params = GuestAttestationParameters {
-        protocol_version: "2.0".into(),
-        os_type: os.os_type,
-        os_distro: os.distro,
-        os_version_major: os.version_major,
-        os_version_minor: os.version_minor,
-        os_build: os.build,
-        tcg_logs,
-        client_payload: client_payload.unwrap_or("").to_string(),
-        tpm_info,
-        isolation,
-    };
-    let request_json = params.to_json_string();
-    tracing::info!(target: "guest_attest", request_len = request_json.len(), "Guest attestation request JSON built");
-
-    let encoded = base64_url_encode(request_json.as_bytes());
-    tracing::info!(target: "guest_attest", encoded_len = encoded.len(), "Guest attestation request base64url encoded");
-    timer.mark("build_request");
-
-    let provider: &dyn AttestationProvider = provider.unwrap_or(&LoopbackProvider);
-    let token = submit_to_provider(&encoded, provider)?;
-    timer.mark("provider");
-    tracing::info!(target: "guest_attest", token_present = token.is_some(), token_len = token.as_ref().map(|t| t.len()).unwrap_or(0), "attest-guest complete");
-    Ok(AttestCvmResult {
-        request_json,
-        encoded_request_b64url: encoded,
-        token_b64url: token,
-        ephemeral_key_handle: eph_handle,
-        pcrs,
-    })
+    tracing::info!(target: "guest_attest", endpoint, "tee-only attestation start");
+    let (payload, detected_type) = build_tee_only_payload(tpm)?;
+    timer.mark("build_payload");
+    let eff_type = force_override.unwrap_or(detected_type);
+    tracing::info!(target: "guest_attest", detected = ?detected_type, effective = ?eff_type, payload_len = payload.len(), "tee-only payload built");
+    let token = submit_tee_only(&payload, endpoint, eff_type)?;
+    Ok((token, payload))
 }
 
-/// Deprecated alias for [`attest_guest`].
-#[deprecated(
-    since = "0.2.0",
-    note = "renamed to `attest_guest` to reflect TrustedLaunch support"
-)]
-pub fn attest_cvm(
-    tpm: &Tpm,
-    provider: Option<&dyn AttestationProvider>,
-    client_payload: Option<&str>,
-) -> io::Result<AttestCvmResult> {
-    attest_guest(tpm, provider, client_payload)
+// ---------------------------------------------------------------------------
+// Base64url helpers
+// ---------------------------------------------------------------------------
+
+/// Base64url (no padding) encode.
+pub fn base64_url_encode(data: &[u8]) -> String {
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data)
 }
+
+/// Base64url (no padding) decode.
+pub fn base64_url_decode(s: &str) -> io::Result<Vec<u8>> {
+    base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(s.as_bytes())
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("b64 decode: {e}")))
+}
+
+// ---------------------------------------------------------------------------
+// TCG log collection
+// ---------------------------------------------------------------------------
 
 /// Collect TCG event logs (best-effort, platform-specific).
 pub fn collect_tcg_logs(os: &OsInfo) -> Vec<u8> {
@@ -1001,21 +543,28 @@ fn read_windows_wbcl() -> Vec<u8> {
     }
 }
 
-/// Attempt to parse and decrypt a guest attestation token envelope returned by provider.
-/// The token is expected to be a base64url encoded JSON object containing fields:
-///   EncryptedInnerKey (base64 std)
-///   EncryptionParams { Iv (base64 std) }
-///   AuthenticationData (base64 std, 16-byte GCM tag)
-///   Jwt (base64 std, ciphertext portion)
-/// The EncryptedInnerKey is decrypted with the ephemeral TPM RSA key bound to PCRs.
-/// Returns Ok(Some(jwt_string)) on success, Ok(None) if format not recognized.
+// ---------------------------------------------------------------------------
+// Token parsing / decryption
+// ---------------------------------------------------------------------------
+
+/// Attempt to parse and decrypt a guest attestation token envelope.
+///
+/// The token is expected to be a base64url encoded JSON object containing:
+///   - `EncryptedInnerKey` (base64 std)
+///   - `EncryptionParams.Iv` (base64 std)
+///   - `AuthenticationData` (base64 std, 16-byte GCM tag)
+///   - `Jwt` (base64 std, ciphertext portion)
+///
+/// The `EncryptedInnerKey` is decrypted with the ephemeral TPM RSA key bound
+/// to the specified PCRs.
+///
+/// Returns `Ok(Some(jwt_string))` on success, `Ok(None)` if format not recognized.
 pub fn parse_token(
     tpm: &Tpm,
     ephemeral_key_handle: u32,
     pcrs: &[u32],
     token_b64url: &str,
 ) -> io::Result<Option<String>> {
-    // Base64url decode outer envelope
     let raw = match base64_url_decode(token_b64url) {
         Ok(v) => v,
         Err(_) => return Ok(None),
@@ -1026,9 +575,8 @@ pub fn parse_token(
     };
     let v: serde_json::Value = match serde_json::from_str(&raw_str) {
         Ok(j) => j,
-        Err(_) => return Ok(None), // Not an envelope JSON
+        Err(_) => return Ok(None),
     };
-    // Required fields
     let enc_inner = match v.get("EncryptedInnerKey").and_then(|x| x.as_str()) {
         Some(s) => s,
         None => return Ok(None),
@@ -1050,7 +598,6 @@ pub fn parse_token(
         None => return Ok(None),
     };
 
-    // Helper base64 (standard first, then url-safe) decode
     fn b64_any(s: &str) -> io::Result<Vec<u8>> {
         use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
         STANDARD
@@ -1075,7 +622,6 @@ pub fn parse_token(
         ));
     }
 
-    // Decrypt inner key via TPM
     let inner_key = crate::tpm::attestation::decrypt_with_ephemeral_key(
         tpm,
         ephemeral_key_handle,
@@ -1089,9 +635,7 @@ pub fn parse_token(
         ));
     }
 
-    // AES-GCM decrypt
     use aes_gcm::{aead::Aead, aead::KeyInit, Aes256Gcm, Nonce};
-    // Support key sizes <32 by zero-extending into 32 for Aes256Gcm (spec unclear). If shorter, right-pad zeros.
     let mut key_bytes = [0u8; 32];
     for (i, b) in inner_key.iter().enumerate().take(32) {
         key_bytes[i] = *b;
@@ -1102,7 +646,7 @@ pub fn parse_token(
     ct_and_tag.extend_from_slice(&jwt_ct);
     ct_and_tag.extend_from_slice(&auth_tag);
     let nonce = Nonce::from_slice(&iv);
-    let aad = b"Transport Key"; // constant associated data per reference implementation
+    let aad = b"Transport Key";
     let plaintext = cipher
         .decrypt(
             nonce,
@@ -1117,14 +661,15 @@ pub fn parse_token(
     Ok(Some(jwt_str))
 }
 
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // -----------------------------------------------------------------------
-    // parse_version_pair tests
-    // -----------------------------------------------------------------------
-
+    // parse_version_pair
     #[test]
     fn parse_version_pair_major_minor() {
         assert_eq!(parse_version_pair("10.0"), (10, 0));
@@ -1144,7 +689,6 @@ mod tests {
 
     #[test]
     fn parse_version_pair_triple() {
-        // Only first two parts used
         assert_eq!(parse_version_pair("1.2.3"), (1, 2));
     }
 
@@ -1153,10 +697,7 @@ mod tests {
         assert_eq!(parse_version_pair("abc.def"), (0, 0));
     }
 
-    // -----------------------------------------------------------------------
-    // base64_url_encode / base64_url_decode tests
-    // -----------------------------------------------------------------------
-
+    // base64_url_encode / decode
     #[test]
     fn base64_url_roundtrip_empty() {
         let encoded = base64_url_encode(&[]);
@@ -1188,7 +729,6 @@ mod tests {
 
     #[test]
     fn base64_url_uses_url_safe_chars() {
-        // Binary data that would produce + and / in standard base64
         let data = vec![0xFF; 16];
         let encoded = base64_url_encode(&data);
         assert!(!encoded.contains('+'));
@@ -1202,13 +742,9 @@ mod tests {
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
     }
 
-    // -----------------------------------------------------------------------
-    // OsInfo tests
-    // -----------------------------------------------------------------------
-
+    // OsInfo
     #[test]
     fn os_info_detect() {
-        // This test will detect the current OS
         let result = OsInfo::detect();
         #[cfg(target_os = "linux")]
         {
@@ -1258,26 +794,24 @@ mod tests {
         assert_eq!(deserialized.pcr_list, info.pcr_list);
     }
 
-    // -----------------------------------------------------------------------
-    // IsolationType serialization tests
-    // -----------------------------------------------------------------------
-
+    // IsolationType
     #[test]
     fn isolation_type_serialization() {
-        let json = serde_json::to_string(&IsolationType::SevSnp).unwrap();
-        assert_eq!(json, "\"SevSnp\"");
-
-        let json = serde_json::to_string(&IsolationType::Tdx).unwrap();
-        assert_eq!(json, "\"Tdx\"");
-
-        let json = serde_json::to_string(&IsolationType::TrustedLaunch).unwrap();
-        assert_eq!(json, "\"TrustedLaunch\"");
+        assert_eq!(
+            serde_json::to_string(&IsolationType::SevSnp).unwrap(),
+            "\"SevSnp\""
+        );
+        assert_eq!(
+            serde_json::to_string(&IsolationType::Tdx).unwrap(),
+            "\"Tdx\""
+        );
+        assert_eq!(
+            serde_json::to_string(&IsolationType::TrustedLaunch).unwrap(),
+            "\"TrustedLaunch\""
+        );
     }
 
-    // -----------------------------------------------------------------------
-    // IsolationInfo serialization tests
-    // -----------------------------------------------------------------------
-
+    // IsolationInfo
     #[test]
     fn isolation_info_without_evidence() {
         let info = IsolationInfo {
@@ -1323,10 +857,7 @@ mod tests {
         assert!(json.contains("\"Type\":\"Tdx\""));
     }
 
-    // -----------------------------------------------------------------------
-    // TeeProof serialization tests
-    // -----------------------------------------------------------------------
-
+    // TeeProof
     #[test]
     fn tee_proof_snp_serialization() {
         let proof = TeeProof::Snp {
@@ -1345,33 +876,11 @@ mod tests {
             td_quote: vec![7, 8, 9],
         };
         let json = serde_json::to_string(&proof).unwrap();
-        // TDX serializes as a plain base64 string
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert!(v.is_string());
     }
 
-    // -----------------------------------------------------------------------
-    // LoopbackProvider tests
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn loopback_provider_returns_token() {
-        let provider = LoopbackProvider;
-        let result = provider.attest_guest("test_request").unwrap();
-        assert!(result.is_some());
-        let token = result.unwrap();
-        // Token should be base64url encoded
-        let decoded = base64_url_decode(&token).unwrap();
-        let json_str = String::from_utf8(decoded).unwrap();
-        let v: serde_json::Value = serde_json::from_str(&json_str).unwrap();
-        assert_eq!(v["loopback"], true);
-        assert_eq!(v["request"], "test_request");
-    }
-
-    // -----------------------------------------------------------------------
-    // PcrEntry serialization tests
-    // -----------------------------------------------------------------------
-
+    // PcrEntry
     #[test]
     fn pcr_entry_serialization() {
         let entry = PcrEntry {
@@ -1383,10 +892,7 @@ mod tests {
         assert!(json.contains("\"Digest\":"));
     }
 
-    // -----------------------------------------------------------------------
-    // TpmInfo serialization tests
-    // -----------------------------------------------------------------------
-
+    // TpmInfo
     #[test]
     fn tpm_info_serialization() {
         let info = TpmInfo {
@@ -1412,10 +918,7 @@ mod tests {
         assert!(json.contains("\"EncKeyPub\":"));
     }
 
-    // -----------------------------------------------------------------------
-    // GuestAttestationParameters serialization tests
-    // -----------------------------------------------------------------------
-
+    // GuestAttestationParameters
     #[test]
     fn guest_attestation_parameters_to_json() {
         let params = GuestAttestationParameters {
@@ -1447,8 +950,8 @@ mod tests {
         assert!(!json.is_empty());
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["AttestationProtocolVersion"], "2.0");
-        assert!(v["TcgLogs"].is_string()); // base64 encoded
-        assert!(v["ClientPayload"].is_object()); // client_payload_b64 serializer
+        assert!(v["TcgLogs"].is_string());
+        assert!(v["ClientPayload"].is_object());
     }
 
     #[test]
@@ -1480,7 +983,6 @@ mod tests {
         };
         let json = params.to_json_string();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        // Empty client payload should serialize as empty object
         assert!(v["ClientPayload"].is_object());
         assert_eq!(v["ClientPayload"].as_object().unwrap().len(), 0);
     }
@@ -1514,27 +1016,19 @@ mod tests {
         };
         let json = params.to_json_string();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        // Invalid JSON client payload should be treated as empty object
         assert!(v["ClientPayload"].is_object());
         assert_eq!(v["ClientPayload"].as_object().unwrap().len(), 0);
     }
 
-    // -----------------------------------------------------------------------
-    // StageTimer tests
-    // -----------------------------------------------------------------------
-
+    // StageTimer
     #[test]
     fn stage_timer_basic() {
         let mut timer = StageTimer::new();
-        // Just verify it doesn't panic
         timer.mark("test_stage");
         timer.mark("another_stage");
     }
 
-    // -----------------------------------------------------------------------
-    // collect_tcg_logs tests
-    // -----------------------------------------------------------------------
-
+    // collect_tcg_logs
     #[test]
     fn collect_tcg_logs_unknown_os() {
         let os = OsInfo {
@@ -1549,10 +1043,7 @@ mod tests {
         assert!(logs.is_empty());
     }
 
-    // -----------------------------------------------------------------------
-    // AttestCvmResult tests
-    // -----------------------------------------------------------------------
-
+    // AttestCvmResult
     #[test]
     fn attest_cvm_result_serialization() {
         let result = AttestCvmResult {
@@ -1569,10 +1060,7 @@ mod tests {
         assert_eq!(deserialized.pcrs, vec![0, 1, 7]);
     }
 
-    // -----------------------------------------------------------------------
-    // TeeOnlyRequest tests
-    // -----------------------------------------------------------------------
-
+    // TeeOnlyRequest
     #[test]
     fn tee_only_request_serialization() {
         let req = TeeOnlyRequest {

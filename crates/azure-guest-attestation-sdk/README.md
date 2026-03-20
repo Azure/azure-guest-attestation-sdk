@@ -38,7 +38,7 @@ azure-guest-attestation-sdk = "0.1"
 use azure_guest_attestation_sdk::{AttestationClient, Provider};
 
 let client = AttestationClient::new()?;
-let result = client.attest(
+let result = client.attest_guest(
     Provider::maa("https://sharedeus.eus.attest.azure.net/attest/SevSnpVm"),
     None,
 )?;
@@ -57,8 +57,12 @@ let client = AttestationClient::new()?;
 // Step 1: Collect CVM (TEE) evidence
 let cvm_evidence = client.get_cvm_evidence(None)?;
 
-// Step 2: Collect TPM device evidence (AK cert, PCR quote, ephemeral key)
-let device_evidence = client.get_device_evidence(&[0, 1, 2, 7])?;
+// Step 2: Collect device evidence (AK cert, PCR quote, ephemeral key)
+use azure_guest_attestation_sdk::{DeviceType, DeviceEvidenceOptions};
+let device_evidence = client.get_device_evidence(Some(&DeviceEvidenceOptions {
+    device_type: DeviceType::Tpm,
+    pcr_selection: Some(vec![0, 1, 2, 7]),
+}))?;
 
 // Step 3: Build the attestation report
 let report = client.create_attestation_report(
