@@ -19,7 +19,8 @@ pub const TPM_RS_PW: u32 = 0x4000_0009;
 pub const ALG_SHA1: u16 = 0x0004;
 pub const ALG_SHA256: u16 = 0x000B;
 pub const ALG_SHA384: u16 = 0x000C;
-pub const ALG_RSAES: u16 = 0x0005;
+pub const ALG_RSAES: u16 = 0x0015;
+pub const ALG_OAEP: u16 = 0x0017;
 pub const ALG_ECC: u16 = 0x0023;
 pub const ALG_ECDSA: u16 = 0x0018;
 
@@ -1045,6 +1046,8 @@ impl TpmMarshal for TpmtSigScheme {
 #[derive(Debug, Clone)]
 pub enum TpmtRsaDecryptScheme {
     Rsaes,
+    /// OAEP with the given hash algorithm (e.g. `ALG_SHA256`).
+    Oaep(u16),
 }
 
 impl TpmMarshal for TpmtRsaDecryptScheme {
@@ -1053,6 +1056,10 @@ impl TpmMarshal for TpmtRsaDecryptScheme {
             TpmtRsaDecryptScheme::Rsaes => {
                 ALG_RSAES.marshal(buf);
                 // No additional scheme-specific bytes for RSAES
+            }
+            TpmtRsaDecryptScheme::Oaep(hash_alg) => {
+                ALG_OAEP.marshal(buf);
+                hash_alg.marshal(buf);
             }
         }
     }

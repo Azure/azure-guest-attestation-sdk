@@ -1294,27 +1294,70 @@ fn base64_url_decode_vec(s: &str) -> anyhow::Result<Vec<u8>> {
 }
 
 fn decode_and_print_jwt(token: &str, writer: &mut dyn Write) -> anyhow::Result<()> {
+    // 1. If it looks like a dot-separated JWT, decode header + payload directly.
     let parts: Vec<&str> = token.split('.').collect();
-    if parts.len() < 2 {
-        writeln!(writer, "(not a JWT structure)")?;
+    if parts.len() >= 2 {
+        let header_raw = base64_url_decode_vec(parts[0])?;
+        let payload_raw = base64_url_decode_vec(parts[1])?;
+        let header = String::from_utf8_lossy(&header_raw);
+        let payload = String::from_utf8_lossy(&payload_raw);
+        writeln!(writer, "JWT Header:")?;
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&header) {
+            writeln!(writer, "{}", serde_json::to_string_pretty(&v)?)?;
+        } else {
+            writeln!(writer, "{header}")?;
+        }
+        writeln!(writer, "JWT Payload:")?;
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&payload) {
+            writeln!(writer, "{}", serde_json::to_string_pretty(&v)?)?;
+        } else {
+            writeln!(writer, "{payload}")?;
+        }
         return Ok(());
     }
-    let header_raw = base64_url_decode_vec(parts[0])?;
-    let payload_raw = base64_url_decode_vec(parts[1])?;
-    let header = String::from_utf8_lossy(&header_raw);
-    let payload = String::from_utf8_lossy(&payload_raw);
-    writeln!(writer, "JWT Header:")?;
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&header) {
-        writeln!(writer, "{}", serde_json::to_string_pretty(&v)?)?;
-    } else {
-        writeln!(writer, "{header}")?;
+
+    // 2. Try base64url-decode → JSON envelope (MAA encrypted token format).
+    //    The envelope has { "Jwt": "...", "EncryptedInnerKey": "...", ... }.
+    if let Ok(raw) = base64_url_decode_vec(token) {
+        if let Ok(text) = String::from_utf8(raw) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                // If there's a "Jwt" field, try to decode it as a JWT.
+                if let Some(jwt_str) = v.get("Jwt").and_then(|j| j.as_str()) {
+                    let jwt_parts: Vec<&str> = jwt_str.split('.').collect();
+                    if jwt_parts.len() >= 2 {
+                        writeln!(writer, "(Decoded encrypted envelope — Jwt field is a JWT)")?;
+                        return decode_and_print_jwt(jwt_str, writer);
+                    }
+                }
+                // Otherwise, print the envelope JSON structure (with long
+                // values truncated for readability).
+                writeln!(writer, "Encrypted envelope:")?;
+                if let Some(obj) = v.as_object() {
+                    for (key, val) in obj {
+                        if let Some(s) = val.as_str() {
+                            if s.len() > 80 {
+                                writeln!(
+                                    writer,
+                                    "  {key}: \"{}...\" ({} bytes)",
+                                    &s[..80],
+                                    s.len()
+                                )?;
+                            } else {
+                                writeln!(writer, "  {key}: \"{s}\"")?;
+                            }
+                        } else {
+                            writeln!(writer, "  {key}: {val}")?;
+                        }
+                    }
+                } else {
+                    writeln!(writer, "{}", serde_json::to_string_pretty(&v)?)?;
+                }
+                return Ok(());
+            }
+        }
     }
-    writeln!(writer, "JWT Payload:")?;
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&payload) {
-        writeln!(writer, "{}", serde_json::to_string_pretty(&v)?)?;
-    } else {
-        writeln!(writer, "{payload}")?;
-    }
+
+    writeln!(writer, "(not a JWT structure)")?;
     Ok(())
 }
 

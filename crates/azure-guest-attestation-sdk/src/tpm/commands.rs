@@ -100,9 +100,15 @@ pub trait TpmCommandExt: RawTpm {
     fn read_pcrs_sha256(&self, pcrs: &[u32]) -> io::Result<Vec<(u32, Vec<u8>)>>;
     fn compute_pcr_policy_digest(&self, pcrs: &[u32]) -> io::Result<Vec<u8>>;
     fn evict_control(&self, persistent_handle: u32, transient_handle: u32) -> io::Result<()>;
-    /// Perform RSA_Decrypt using RSAES-PKCS1-v1_5 scheme with the given key handle.
+    /// Perform TPM2_RSA_Decrypt with the specified scheme.
     /// Returns the plaintext bytes (TPM2B_PUBLIC_KEY_RSA outData contents).
-    fn rsa_decrypt(&self, key_handle: u32, pcrs: &[u32], ciphertext: &[u8]) -> io::Result<Vec<u8>>;
+    fn rsa_decrypt(
+        &self,
+        key_handle: u32,
+        pcrs: &[u32],
+        ciphertext: &[u8],
+        scheme: TpmtRsaDecryptScheme,
+    ) -> io::Result<Vec<u8>>;
     /// Start an auth session (typically policy) returning the session handle.
     /// session_type: 0x03 for TPM_SE_POLICY, 0x02 for HMAC, etc.
     /// auth_hash_alg: e.g., TpmAlgId::Sha256.into(). Uses symmetric alg = TPM_ALG_NULL.
@@ -615,7 +621,21 @@ impl<T: RawTpm> TpmCommandExt for T {
         Ok(())
     }
 
-    fn rsa_decrypt(&self, key_handle: u32, pcrs: &[u32], ciphertext: &[u8]) -> io::Result<Vec<u8>> {
+    fn rsa_decrypt(
+        &self,
+        key_handle: u32,
+        pcrs: &[u32],
+        ciphertext: &[u8],
+        scheme: TpmtRsaDecryptScheme,
+    ) -> io::Result<Vec<u8>> {
+        // RSA-2048 ciphertext must be exactly 256 bytes.  Some serializers
+        // (e.g. .NET BigInteger) may produce 257 bytes if the high bit is
+        // set.  Trim the leading byte when it is 0x00.
+        let ciphertext = if ciphertext.len() == 257 && ciphertext[0] == 0x00 {
+            &ciphertext[1..]
+        } else {
+            ciphertext
+        };
         if ciphertext.len() > 512 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -624,7 +644,7 @@ impl<T: RawTpm> TpmCommandExt for T {
         }
         let base_parameters = RsaDecryptCommandParameters {
             cipher_text: ciphertext.to_vec(),
-            scheme: TpmtRsaDecryptScheme::Rsaes,
+            scheme,
             label: Vec::new(),
         };
 

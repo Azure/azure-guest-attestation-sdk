@@ -405,17 +405,16 @@ pub fn get_ephemeral_key(tpm: &Tpm, pcrs: &[u32]) -> io::Result<EphemeralKeyArti
 }
 
 /// Decrypt data with an existing ephemeral RSA key (created via `get_ephemeral_key`).
-/// Uses TPM2_RSA_Decrypt with RSAES-PKCS1-v1_5 scheme (no OAEP). Caller supplies full RSA block
-/// ciphertext (e.g., 256 bytes for 2048-bit key) or a shorter representative (the TPM will
-/// process the exact provided size). Returns the plaintext output from the TPM (PKCS#1 v1.5
-/// unpadded message portion after 0x00 0x02 PS 0x00).
+/// Uses TPM2_RSA_Decrypt with **RSAES (PKCS#1 v1.5)** scheme, matching the encryption
+/// scheme used by Microsoft Azure Attestation (MAA).
 pub fn decrypt_with_ephemeral_key(
     tpm: &Tpm,
     key_handle: u32,
     pcrs: &[u32],
     ciphertext: &[u8],
 ) -> io::Result<Vec<u8>> {
-    tpm.rsa_decrypt(key_handle, pcrs, ciphertext)
+    use crate::tpm::types::TpmtRsaDecryptScheme;
+    tpm.rsa_decrypt(key_handle, pcrs, ciphertext, TpmtRsaDecryptScheme::Rsaes)
 }
 
 #[cfg(test)]
@@ -643,9 +642,10 @@ mod tests {
     fn vtpm_ephemeral_rsa_decrypt_roundtrip() {
         #[cfg(feature = "vtpm-tests")]
         {
-            use crate::tpm::attestation::{decrypt_with_ephemeral_key, get_ephemeral_key};
+            use crate::tpm::attestation::get_ephemeral_key;
+            use crate::tpm::commands::TpmCommandExt;
             use crate::tpm::device::Tpm;
-            use crate::tpm::types::{Tpm2bPublic, TpmUnmarshal};
+            use crate::tpm::types::{Tpm2bPublic, TpmUnmarshal, TpmtRsaDecryptScheme};
             use num_bigint::BigUint;
             use rand::{rngs::StdRng, RngCore, SeedableRng};
 
@@ -660,7 +660,7 @@ mod tests {
             let handle = u32::from_be_bytes(handle_be[0..4].try_into().unwrap());
             let mut cur = 0usize;
             let parsed = Tpm2bPublic::unmarshal(&pub_area, &mut cur).expect("parse pub");
-            let modulus_be = &parsed.inner.unique.0; // may be empty until key actually has unique data (ref TPM returns populated)
+            let modulus_be = &parsed.inner.unique.0;
             if modulus_be.len() != 256 {
                 return;
             } // skip if not RSA2048
@@ -701,7 +701,13 @@ mod tests {
                 pad.extend_from_slice(&ciphertext);
                 ciphertext = pad;
             }
-            let decrypted = match decrypt_with_ephemeral_key(&tpm, handle, &[], &ciphertext) {
+            // Use RSAES scheme directly since we built PKCS#1 v1.5 padding above
+            let decrypted = match tpm.rsa_decrypt(
+                handle,
+                &[],
+                &ciphertext,
+                TpmtRsaDecryptScheme::Rsaes,
+            ) {
                 Ok(d) => d,
                 Err(e) => {
                     tracing::debug!(target: "guest_attest", error = %e, "Skipping RSA decrypt test (shared TPM contention)");
@@ -721,9 +727,10 @@ mod tests {
     fn vtpm_ephemeral_rsa_decrypt_roundtrip_policy() {
         #[cfg(feature = "vtpm-tests")]
         {
-            use crate::tpm::attestation::{decrypt_with_ephemeral_key, get_ephemeral_key};
+            use crate::tpm::attestation::get_ephemeral_key;
+            use crate::tpm::commands::TpmCommandExt;
             use crate::tpm::device::Tpm;
-            use crate::tpm::types::{Tpm2bPublic, TpmUnmarshal};
+            use crate::tpm::types::{Tpm2bPublic, TpmUnmarshal, TpmtRsaDecryptScheme};
             use num_bigint::BigUint;
             use rand::{rngs::StdRng, RngCore, SeedableRng};
 
@@ -782,11 +789,12 @@ mod tests {
                 pad.extend_from_slice(&ciphertext);
                 ciphertext = pad;
             }
-            // Attempt decrypt (should trigger policy session fallback internally)
-            let decrypted = match decrypt_with_ephemeral_key(&tpm, handle, &[0], &ciphertext) {
-                Ok(v) => v,
-                Err(_) => return,
-            };
+            // Use RSAES scheme directly since we built PKCS#1 v1.5 padding above
+            let decrypted =
+                match tpm.rsa_decrypt(handle, &[0], &ciphertext, TpmtRsaDecryptScheme::Rsaes) {
+                    Ok(v) => v,
+                    Err(_) => return,
+                };
             assert!(
                 decrypted.ends_with(message),
                 "policy decrypt output mismatch"
