@@ -448,12 +448,15 @@ fn main() -> anyhow::Result<()> {
                             writeln!(
                                 writer,
                                 "Not Before: {}",
-                                x509.validity().not_before.to_rfc2822()
+                                x509.validity()
+                                    .not_before
+                                    .to_rfc2822()
+                                    .unwrap_or_else(|e| e)
                             )?;
                             writeln!(
                                 writer,
                                 "Not After: {}",
-                                x509.validity().not_after.to_rfc2822()
+                                x509.validity().not_after.to_rfc2822().unwrap_or_else(|e| e)
                             )?;
                         }
                         Err(e) => writeln!(writer, "Failed to parse cert: {e}")?,
