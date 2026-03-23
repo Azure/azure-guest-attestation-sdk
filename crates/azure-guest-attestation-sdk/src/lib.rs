@@ -84,24 +84,94 @@ impl Drop for FlushOnDropStderr {
     }
 }
 
+/// Log output format for [`init_tracing_with`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LogFormat {
+    /// Human-readable text (default).
+    #[default]
+    Text,
+    /// JSON-structured output (recommended for Geneva / structured-log collectors).
+    Json,
+}
+
+/// Configuration for the SDK tracing subscriber.
+///
+/// Use [`Default::default()`] for sensible defaults (INFO level, text format),
+/// then override individual fields as needed.
+///
+/// ```ignore
+/// use azure_guest_attestation_sdk::{TracingConfig, LogFormat};
+///
+/// azure_guest_attestation_sdk::init_tracing_with(TracingConfig {
+///     filter: "trace".into(),
+///     format: LogFormat::Json,
+/// });
+/// ```
+#[derive(Debug, Clone)]
+pub struct TracingConfig {
+    /// Tracing filter directive (e.g. `"info"`, `"guest_attest=debug"`).
+    ///
+    /// Defaults to `"info"`.
+    pub filter: String,
+    /// Log output format.
+    ///
+    /// Defaults to [`LogFormat::Text`].
+    pub format: LogFormat,
+}
+
+impl Default for TracingConfig {
+    fn default() -> Self {
+        Self {
+            filter: "info".into(),
+            format: LogFormat::Text,
+        }
+    }
+}
+
 /// Initialize global tracing subscriber (idempotent).
 ///
 /// Default level: INFO.  Override via `AZURE_GUEST_ATTESTATION_LOG` or `RUST_LOG`.
 ///
 /// Set `AZURE_GUEST_ATTESTATION_LOG_FORMAT=json` for JSON-structured output
 /// (recommended for Geneva / structured-log collectors).
+///
+/// For programmatic control without environment variables, use
+/// [`init_tracing_with`] instead.
 pub fn init_tracing() {
-    INIT_TRACING.call_once(|| {
-        // Default level INFO; allow override via AZURE_GUEST_ATTESTATION_LOG or RUST_LOG.
-        let env_var = std::env::var("AZURE_GUEST_ATTESTATION_LOG").ok();
-        let default = "info".to_string();
-        let filter = env_var
-            .or_else(|| std::env::var("RUST_LOG").ok())
-            .unwrap_or(default);
+    let env_var = std::env::var("AZURE_GUEST_ATTESTATION_LOG").ok();
+    let filter = env_var
+        .or_else(|| std::env::var("RUST_LOG").ok())
+        .unwrap_or_else(|| "info".into());
 
-        let use_json = std::env::var("AZURE_GUEST_ATTESTATION_LOG_FORMAT")
-            .map(|v| v.eq_ignore_ascii_case("json"))
-            .unwrap_or(false);
+    let format = if std::env::var("AZURE_GUEST_ATTESTATION_LOG_FORMAT")
+        .map(|v| v.eq_ignore_ascii_case("json"))
+        .unwrap_or(false)
+    {
+        LogFormat::Json
+    } else {
+        LogFormat::Text
+    };
+
+    init_tracing_with(TracingConfig { filter, format });
+}
+
+/// Initialize global tracing subscriber with explicit configuration (idempotent).
+///
+/// Prefer this over [`init_tracing`] when you need to set the format
+/// programmatically (e.g. from an application that uses Rust edition 2024
+/// where `std::env::set_var` is `unsafe`).
+///
+/// ```ignore
+/// use azure_guest_attestation_sdk::{TracingConfig, LogFormat};
+///
+/// azure_guest_attestation_sdk::init_tracing_with(TracingConfig {
+///     filter: "trace".into(),
+///     format: LogFormat::Json,
+/// });
+/// ```
+pub fn init_tracing_with(config: TracingConfig) {
+    INIT_TRACING.call_once(|| {
+        let use_json = config.format == LogFormat::Json;
 
         // Use Option<Layer> pattern so only the chosen format is active.
         let json_layer = use_json.then(|| {
@@ -124,7 +194,7 @@ pub fn init_tracing() {
         });
 
         let subscriber = tracing_subscriber::registry()
-            .with(tracing_subscriber::EnvFilter::new(filter))
+            .with(tracing_subscriber::EnvFilter::new(&config.filter))
             .with(json_layer)
             .with(text_layer);
         let _ = tracing::subscriber::set_global_default(subscriber);
