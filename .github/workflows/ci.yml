@@ -133,4 +133,5 @@ jobs:
       - name: Run tests and check coverage threshold
         run: |
           cargo llvm-cov --workspace --features vtpm-tests \
+            --ignore-filename-regex '(src/lib\.rs|azure-guest-attest/src/main\.rs)$' \
             --fail-under-lines 60

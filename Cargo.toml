@@ -24,7 +24,7 @@ sha2 = "0.10"
 sha1 = "0.10"
 digest = "0.10"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 
 # CLI dependencies
 # Pin to 4.5.x <=4.5.37 to keep clap_lex on 0.7.x (MSRV 1.76 compat)

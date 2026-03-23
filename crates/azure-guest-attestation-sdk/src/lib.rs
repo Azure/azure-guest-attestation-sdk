@@ -56,14 +56,40 @@ pub use client::{
 };
 pub use parse::TokenClaims;
 
+use std::io::Write;
 use std::sync::Once;
 use tracing_subscriber::prelude::*;
 
 static INIT_TRACING: Once = Once::new();
 
+/// Wrapper around [`std::io::Stderr`] that calls `flush()` on drop.
+///
+/// Geneva and similar log-collection agents can miss events when a process
+/// exits or crashes if the underlying writer is buffered.  Wrapping stderr
+/// in this newtype guarantees a flush after every formatted tracing event.
+struct FlushOnDropStderr(std::io::Stderr);
+
+impl std::io::Write for FlushOnDropStderr {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.write(buf)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
+
+impl Drop for FlushOnDropStderr {
+    fn drop(&mut self) {
+        let _ = self.0.flush();
+    }
+}
+
 /// Initialize global tracing subscriber (idempotent).
 ///
-/// Default level: INFO. Override via `AZURE_GUEST_ATTESTATION_LOG` or `RUST_LOG`.
+/// Default level: INFO.  Override via `AZURE_GUEST_ATTESTATION_LOG` or `RUST_LOG`.
+///
+/// Set `AZURE_GUEST_ATTESTATION_LOG_FORMAT=json` for JSON-structured output
+/// (recommended for Geneva / structured-log collectors).
 pub fn init_tracing() {
     INIT_TRACING.call_once(|| {
         // Default level INFO; allow override via AZURE_GUEST_ATTESTATION_LOG or RUST_LOG.
@@ -72,14 +98,35 @@ pub fn init_tracing() {
         let filter = env_var
             .or_else(|| std::env::var("RUST_LOG").ok())
             .unwrap_or(default);
-        let fmt_layer = tracing_subscriber::fmt::layer()
-            .with_target(true)
-            .with_level(true)
-            .with_thread_ids(false)
-            .with_thread_names(false);
+
+        let use_json = std::env::var("AZURE_GUEST_ATTESTATION_LOG_FORMAT")
+            .map(|v| v.eq_ignore_ascii_case("json"))
+            .unwrap_or(false);
+
+        // Use Option<Layer> pattern so only the chosen format is active.
+        let json_layer = use_json.then(|| {
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_target(true)
+                .with_level(true)
+                .with_thread_ids(false)
+                .with_thread_names(false)
+                .with_writer(|| FlushOnDropStderr(std::io::stderr()))
+        });
+
+        let text_layer = (!use_json).then(|| {
+            tracing_subscriber::fmt::layer()
+                .with_target(true)
+                .with_level(true)
+                .with_thread_ids(false)
+                .with_thread_names(false)
+                .with_writer(|| FlushOnDropStderr(std::io::stderr()))
+        });
+
         let subscriber = tracing_subscriber::registry()
             .with(tracing_subscriber::EnvFilter::new(filter))
-            .with(fmt_layer);
+            .with(json_layer)
+            .with(text_layer);
         let _ = tracing::subscriber::set_global_default(subscriber);
         tracing::info!(target: "guest_attest", "tracing initialized");
     });
