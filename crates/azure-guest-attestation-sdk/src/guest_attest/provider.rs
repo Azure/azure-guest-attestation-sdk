@@ -21,6 +21,34 @@ use std::{io, thread};
 use super::{base64_url_encode, StageTimer};
 
 // ---------------------------------------------------------------------------
+// MAA endpoint defaults
+// ---------------------------------------------------------------------------
+
+/// Default API path for guest attestation (with TPM evidence).
+const GUEST_ATTEST_PATH: &str = "/attest/AzureGuest";
+/// Default API version for guest attestation.
+const GUEST_ATTEST_API_VERSION: &str = "2020-10-01";
+/// Default API path for TEE-only SNP attestation.
+const TEE_SNP_PATH: &str = "/attest/SevSnpVm";
+/// Default API path for TEE-only TDX attestation.
+const TEE_TDX_PATH: &str = "/attest/TdxVm";
+/// Default API version for TEE-only attestation.
+const TEE_ATTEST_API_VERSION: &str = "2022-08-01";
+
+/// If the endpoint URL looks like a bare base URL (no `/attest/` path),
+/// append the given `path` and `api_version` query parameter.
+///
+/// When the URL already contains `/attest/`, it is returned unchanged so that
+/// callers who supply a fully-qualified URL are unaffected.
+fn resolve_maa_url(base: &str, path: &str, api_version: &str) -> String {
+    if base.contains("/attest/") {
+        return base.to_string();
+    }
+    let base = base.trim_end_matches('/');
+    format!("{base}{path}?api-version={api_version}")
+}
+
+// ---------------------------------------------------------------------------
 // Trait
 // ---------------------------------------------------------------------------
 
@@ -58,6 +86,11 @@ impl AttestationProvider for LoopbackProvider {
 /// Posts the base64url-encoded request as JSON to a supplied endpoint and
 /// expects a JWT token string in response (under JSON field `"token"`, or
 /// the raw body as fallback).
+///
+/// If only a base URL is provided (e.g.
+/// `https://sharedeus.eus.attest.azure.net`), the guest attestation path
+/// `/attest/AzureGuest?api-version=2020-10-01` is appended automatically.
+/// When a full URL is supplied (containing `/attest/`), it is used as-is.
 pub struct MaaProvider {
     client: Client,
     endpoint: String,
@@ -65,7 +98,16 @@ pub struct MaaProvider {
 
 impl MaaProvider {
     /// Create a new MAA provider targeting the given endpoint URL.
+    ///
+    /// Accepts either a bare MAA base URL (e.g.
+    /// `https://sharedeus.eus.attest.azure.net`) or a fully-qualified URL
+    /// (e.g. `https://…/attest/AzureGuest?api-version=2020-10-01`). When
+    /// only the base URL is given the default guest-attest path and
+    /// api-version are appended.
     pub fn new(endpoint: impl Into<String>) -> Self {
+        let raw: String = endpoint.into();
+        let resolved = resolve_maa_url(&raw, GUEST_ATTEST_PATH, GUEST_ATTEST_API_VERSION);
+        tracing::info!(target: "guest_attest", provider = "MAA", raw_endpoint = %raw, resolved_endpoint = %resolved, "MAA provider created");
         // Extended timeout (5 minutes) to accommodate potentially slow responses.
         let client = Client::builder()
             .timeout(Duration::from_secs(300))
@@ -76,7 +118,7 @@ impl MaaProvider {
             });
         Self {
             client,
-            endpoint: endpoint.into(),
+            endpoint: resolved,
         }
     }
 }
@@ -176,6 +218,12 @@ pub fn submit_to_provider(
 
 /// Submit a TEE-only JSON payload to a MAA platform endpoint.
 ///
+/// If only a base URL is provided (e.g.
+/// `https://sharedeus.eus.attest.azure.net`), the correct TEE-only path
+/// (`/attest/SevSnpVm` or `/attest/TdxVm`) and api-version are appended
+/// automatically based on `report_type`. Fully-qualified URLs (containing
+/// `/attest/`) are used as-is.
+///
 /// Returns the token string. If the response body is not JSON with a
 /// `"token"` field the raw body is returned as the token string.
 pub fn submit_tee_only(
@@ -184,17 +232,23 @@ pub fn submit_tee_only(
     report_type: crate::report::CvmReportType,
 ) -> io::Result<String> {
     let mut timer = StageTimer::new();
+    // Resolve the URL: append the correct TEE-only path when only a base URL is given.
+    let tee_path = match report_type {
+        crate::report::CvmReportType::SnpVmReport => TEE_SNP_PATH,
+        _ => TEE_TDX_PATH,
+    };
+    let endpoint = resolve_maa_url(endpoint, tee_path, TEE_ATTEST_API_VERSION);
     // Best-effort endpoint / type sanity warnings
     if report_type == crate::report::CvmReportType::SnpVmReport && !endpoint.contains("SevSnpVm") {
-        tracing::warn!(target: "guest_attest", endpoint, "SNP evidence but endpoint name lacks 'SevSnpVm'");
+        tracing::warn!(target: "guest_attest", %endpoint, "SNP evidence but endpoint name lacks 'SevSnpVm'");
     }
     if report_type == crate::report::CvmReportType::TdxVmReport && !endpoint.contains("TdxVm") {
-        tracing::warn!(target: "guest_attest", endpoint, "TDX evidence but endpoint name lacks 'TdxVm'");
+        tracing::warn!(target: "guest_attest", %endpoint, "TDX evidence but endpoint name lacks 'TdxVm'");
     }
     let client = reqwest::blocking::Client::new();
-    tracing::info!(target: "guest_attest", endpoint, "POST tee-only attestation request");
+    tracing::info!(target: "guest_attest", %endpoint, "POST tee-only attestation request");
     let resp = client
-        .post(endpoint)
+        .post(&endpoint)
         .json(
             &serde_json::from_str::<serde_json::Value>(payload)
                 .unwrap_or_else(|_| serde_json::json!({})),
@@ -238,5 +292,93 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&json_str).unwrap();
         assert_eq!(v["loopback"], true);
         assert_eq!(v["request"], "test_request");
+    }
+
+    // resolve_maa_url
+    #[test]
+    fn resolve_base_url_appends_path() {
+        let url = resolve_maa_url(
+            "https://sharedeus.eus.attest.azure.net",
+            GUEST_ATTEST_PATH,
+            GUEST_ATTEST_API_VERSION,
+        );
+        assert_eq!(
+            url,
+            "https://sharedeus.eus.attest.azure.net/attest/AzureGuest?api-version=2020-10-01"
+        );
+    }
+
+    #[test]
+    fn resolve_base_url_trailing_slash() {
+        let url = resolve_maa_url(
+            "https://sharedeus.eus.attest.azure.net/",
+            GUEST_ATTEST_PATH,
+            GUEST_ATTEST_API_VERSION,
+        );
+        assert_eq!(
+            url,
+            "https://sharedeus.eus.attest.azure.net/attest/AzureGuest?api-version=2020-10-01"
+        );
+    }
+
+    #[test]
+    fn resolve_full_url_unchanged() {
+        let full =
+            "https://sharedeus.eus.attest.azure.net/attest/AzureGuest?api-version=2020-10-01";
+        let url = resolve_maa_url(full, GUEST_ATTEST_PATH, GUEST_ATTEST_API_VERSION);
+        assert_eq!(url, full);
+    }
+
+    #[test]
+    fn resolve_full_url_custom_api_version_unchanged() {
+        let full = "https://custom.attest.azure.net/attest/SevSnpVm?api-version=2023-04-01-preview";
+        let url = resolve_maa_url(full, TEE_SNP_PATH, TEE_ATTEST_API_VERSION);
+        assert_eq!(url, full);
+    }
+
+    #[test]
+    fn resolve_tee_snp_path() {
+        let url = resolve_maa_url(
+            "https://sharedeus.eus.attest.azure.net",
+            TEE_SNP_PATH,
+            TEE_ATTEST_API_VERSION,
+        );
+        assert_eq!(
+            url,
+            "https://sharedeus.eus.attest.azure.net/attest/SevSnpVm?api-version=2022-08-01"
+        );
+    }
+
+    #[test]
+    fn resolve_tee_tdx_path() {
+        let url = resolve_maa_url(
+            "https://sharedeus.eus.attest.azure.net",
+            TEE_TDX_PATH,
+            TEE_ATTEST_API_VERSION,
+        );
+        assert_eq!(
+            url,
+            "https://sharedeus.eus.attest.azure.net/attest/TdxVm?api-version=2022-08-01"
+        );
+    }
+
+    #[test]
+    fn maa_provider_resolves_base_url() {
+        let provider = MaaProvider::new("https://example.attest.azure.net");
+        assert_eq!(
+            provider.endpoint,
+            "https://example.attest.azure.net/attest/AzureGuest?api-version=2020-10-01"
+        );
+    }
+
+    #[test]
+    fn maa_provider_keeps_full_url() {
+        let provider = MaaProvider::new(
+            "https://example.attest.azure.net/attest/AzureGuest?api-version=2020-10-01",
+        );
+        assert_eq!(
+            provider.endpoint,
+            "https://example.attest.azure.net/attest/AzureGuest?api-version=2020-10-01"
+        );
     }
 }

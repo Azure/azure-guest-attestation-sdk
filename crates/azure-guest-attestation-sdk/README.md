@@ -39,7 +39,7 @@ use azure_guest_attestation_sdk::{AttestationClient, Provider};
 
 let client = AttestationClient::new()?;
 let result = client.attest_guest(
-    Provider::maa("https://sharedeus.eus.attest.azure.net/attest/SevSnpVm"),
+    Provider::maa("https://sharedeus.eus.attest.azure.net"),
     None,
 )?;
 println!("Token: {}", result.token.unwrap_or_default());
