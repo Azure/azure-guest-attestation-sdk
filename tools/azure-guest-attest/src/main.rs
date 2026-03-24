@@ -126,6 +126,9 @@ enum Commands {
         /// Output the quote bytes as a hex string instead of parsing
         #[arg(long)]
         hex: bool,
+        /// Output the quote bytes as a base64 string instead of parsing
+        #[arg(long)]
+        base64: bool,
         /// Pretty print parsed structure (default true unless --raw or --hex)
         #[arg(long, default_value_t = true)]
         pretty: bool,
@@ -623,6 +626,7 @@ fn main() -> anyhow::Result<()> {
             quote,
             raw,
             hex,
+            base64,
             pretty,
             ignore_signature,
             save_pck_pem,
@@ -635,9 +639,17 @@ fn main() -> anyhow::Result<()> {
                     anyhow::anyhow!("TD quote not available: host does not expose TDX report")
                 })?
             };
-            // raw outputs binary bytes, hex outputs hex string
+            // raw outputs binary bytes, hex outputs hex string, base64 outputs base64 string
             if raw {
                 writer.write_all(&quote_bytes)?;
+                return Ok(());
+            }
+            if base64 {
+                writeln!(
+                    writer,
+                    "{}",
+                    base64::engine::general_purpose::STANDARD.encode(&quote_bytes)
+                )?;
                 return Ok(());
             }
             let capture_chain = save_pck_pem.is_some();
@@ -1597,6 +1609,7 @@ mod tests {
                 quote,
                 raw,
                 hex,
+                base64,
                 pretty,
                 ignore_signature,
                 save_pck_pem,
@@ -1604,6 +1617,7 @@ mod tests {
                 assert_eq!(quote, Some(PathBuf::from("quote.bin")));
                 assert!(raw);
                 assert!(!hex);
+                assert!(!base64);
                 assert!(pretty);
                 assert!(!ignore_signature);
                 assert!(save_pck_pem.is_none());
@@ -1618,6 +1632,7 @@ mod tests {
                 quote,
                 raw,
                 hex,
+                base64,
                 pretty,
                 ignore_signature,
                 save_pck_pem,
@@ -1625,6 +1640,7 @@ mod tests {
                 assert_eq!(quote, Some(PathBuf::from("quote.bin")));
                 assert!(!raw);
                 assert!(hex);
+                assert!(!base64);
                 assert!(pretty);
                 assert!(!ignore_signature);
                 assert!(save_pck_pem.is_none());
@@ -1641,6 +1657,7 @@ mod tests {
                 quote,
                 raw,
                 hex,
+                base64,
                 pretty,
                 ignore_signature,
                 save_pck_pem,
@@ -1648,6 +1665,7 @@ mod tests {
                 assert!(quote.is_none());
                 assert!(!raw);
                 assert!(!hex);
+                assert!(!base64);
                 assert!(pretty);
                 assert!(!ignore_signature);
                 assert!(save_pck_pem.is_none());
@@ -1664,6 +1682,7 @@ mod tests {
                 quote,
                 raw,
                 hex,
+                base64,
                 pretty,
                 ignore_signature,
                 save_pck_pem,
@@ -1671,9 +1690,35 @@ mod tests {
                 assert!(quote.is_none());
                 assert!(!raw);
                 assert!(!hex);
+                assert!(!base64);
                 assert!(pretty);
                 assert!(!ignore_signature);
                 assert_eq!(save_pck_pem, Some(PathBuf::from("chain.pem")));
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clap_parses_td_quote_base64_flag() {
+        let cli = Cli::try_parse_from(["tool", "td-quote", "--base64", "quote.bin"]).unwrap();
+        match cli.command {
+            Commands::TdQuote {
+                quote,
+                raw,
+                hex,
+                base64,
+                pretty,
+                ignore_signature,
+                save_pck_pem,
+            } => {
+                assert_eq!(quote, Some(PathBuf::from("quote.bin")));
+                assert!(!raw);
+                assert!(!hex);
+                assert!(base64);
+                assert!(pretty);
+                assert!(!ignore_signature);
+                assert!(save_pck_pem.is_none());
             }
             other => panic!("unexpected command: {other:?}"),
         }
