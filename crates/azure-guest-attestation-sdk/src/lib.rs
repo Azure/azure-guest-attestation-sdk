@@ -19,9 +19,10 @@
 //! // Create a client (owns TPM internally)
 //! let client = AttestationClient::new()?;
 //!
-//! // One-shot attestation against MAA
+//! // One-shot attestation against MAA (base URL — the SDK appends the
+//! // correct path and api-version automatically)
 //! let result = client.attest_guest(
-//!     Provider::maa("https://sharedeus.eus.attest.azure.net/attest/SevSnpVm"),
+//!     Provider::maa("https://sharedeus.eus.attest.azure.net"),
 //!     None,
 //! )?;
 //! println!("Token: {}", result.token.unwrap_or_default());

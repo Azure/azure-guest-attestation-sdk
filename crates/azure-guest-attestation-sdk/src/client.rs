@@ -19,7 +19,7 @@
 //!
 //! // One-shot attestation against MAA
 //! let result = client.attest_guest(
-//!     Provider::maa("https://sharedeus.eus.attest.azure.net/attest/SevSnpVm"),
+//!     Provider::maa("https://sharedeus.eus.attest.azure.net"),
 //!     None,
 //! )?;
 //! println!("Token: {}", result.token.unwrap_or_default());
@@ -48,8 +48,12 @@ use crate::tpm::device::Tpm;
 pub enum Provider {
     /// Microsoft Azure Attestation (MAA) service.
     Maa {
-        /// Full endpoint URL, e.g.
-        /// `https://sharedeus.eus.attest.azure.net/attest/SevSnpVm?api-version=2022-08-01`
+        /// MAA endpoint URL.
+        ///
+        /// Can be a bare base URL (e.g. `https://sharedeus.eus.attest.azure.net`)
+        /// — the SDK will append the appropriate API path and version
+        /// automatically.  Fully-qualified URLs (containing `/attest/`) are
+        /// used as-is.
         endpoint: String,
     },
     /// Loopback provider for testing — echoes the request back as a JSON token.
@@ -662,10 +666,19 @@ mod tests {
 
     #[test]
     fn provider_maa_shorthand() {
+        // Full URL — kept as-is
         let p = Provider::maa("https://example.attest.azure.net/attest/SevSnpVm");
         match &p {
             Provider::Maa { endpoint } => {
                 assert_eq!(endpoint, "https://example.attest.azure.net/attest/SevSnpVm");
+            }
+            _ => panic!("expected Maa variant"),
+        }
+        // Base URL — stored as-is in the enum (resolution happens in MaaProvider::new)
+        let p = Provider::maa("https://example.attest.azure.net");
+        match &p {
+            Provider::Maa { endpoint } => {
+                assert_eq!(endpoint, "https://example.attest.azure.net");
             }
             _ => panic!("expected Maa variant"),
         }
