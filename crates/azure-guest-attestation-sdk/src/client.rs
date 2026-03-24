@@ -569,6 +569,28 @@ impl AttestationClient {
         result
     }
 
+    /// Decrypt raw ciphertext using a TPM ephemeral RSA key derived from the
+    /// given PCR indices.
+    ///
+    /// The ephemeral key is a deterministic TPM2 primary — it is recreated
+    /// from the same PCRs each time.  The decryption uses RSAES (PKCS#1 v1.5),
+    /// matching the scheme used by Microsoft Azure Attestation (MAA) to
+    /// encrypt data to the VM.
+    ///
+    /// This is a lower-level primitive than [`decrypt_token`](Self::decrypt_token):
+    /// it operates on raw RSA ciphertext bytes rather than the full MAA
+    /// encrypted token envelope.
+    pub fn decrypt_with_tpm_ephemeral_key(
+        &self,
+        pcrs: &[u32],
+        ciphertext: &[u8],
+    ) -> io::Result<Vec<u8>> {
+        let handle = self.recreate_ephemeral_key(pcrs)?;
+        let result = attestation::decrypt_with_ephemeral_key(&self.tpm, handle, pcrs, ciphertext);
+        let _ = self.tpm.flush_context(handle);
+        result
+    }
+
     /// Recreate the deterministic ephemeral RSA primary key from PCRs and
     /// return its transient handle.  Caller **must** flush the handle when done.
     fn recreate_ephemeral_key(&self, pcrs: &[u32]) -> io::Result<u32> {
