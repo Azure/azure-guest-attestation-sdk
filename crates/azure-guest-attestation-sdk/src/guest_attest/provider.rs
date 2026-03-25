@@ -33,7 +33,7 @@ const TEE_SNP_PATH: &str = "/attest/SevSnpVm";
 /// Default API path for TEE-only TDX attestation.
 const TEE_TDX_PATH: &str = "/attest/TdxVm";
 /// Default API version for TEE-only attestation.
-const TEE_ATTEST_API_VERSION: &str = "2022-08-01";
+const TEE_ATTEST_API_VERSION: &str = "2023-04-01-preview";
 
 /// If the endpoint URL looks like a bare base URL (no `/attest/` path),
 /// append the given `path` and `api_version` query parameter.
@@ -345,7 +345,7 @@ mod tests {
         );
         assert_eq!(
             url,
-            "https://sharedeus.eus.attest.azure.net/attest/SevSnpVm?api-version=2022-08-01"
+            "https://sharedeus.eus.attest.azure.net/attest/SevSnpVm?api-version=2023-04-01-preview"
         );
     }
 
@@ -358,7 +358,7 @@ mod tests {
         );
         assert_eq!(
             url,
-            "https://sharedeus.eus.attest.azure.net/attest/TdxVm?api-version=2022-08-01"
+            "https://sharedeus.eus.attest.azure.net/attest/TdxVm?api-version=2023-04-01-preview"
         );
     }
 

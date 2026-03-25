@@ -11,3 +11,8 @@ nt = "nextest run -p azure-guest-attestation-sdk --features vtpm-tests"
 
 # Fallback: run with built-in test harness (shared singleton serializes access)
 vt = "test -p azure-guest-attestation-sdk --features vtpm-tests --lib"
+
+# Statically link the MSVC C runtime on Windows so binaries run on machines
+# without the Visual C++ Redistributable installed.
+[target.'cfg(all(target_os = "windows", target_env = "msvc"))']
+rustflags = ["-Ctarget-feature=+crt-static"]

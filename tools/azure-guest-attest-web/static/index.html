@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Azure Guest Attestation — Web UI</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <header>
+        <h1>🔐 Azure Guest Attestation</h1>
+        <p class="subtitle">Interactive web interface for CVM attestation operations</p>
+    </header>
+
+    <div class="layout">
+        <nav id="sidebar">
+            <div class="nav-section">
+                <h3>System</h3>
+                <button class="nav-btn active" data-panel="diagnose">Diagnose</button>
+            </div>
+            <div class="nav-section">
+                <h3>Evidence</h3>
+                <button class="nav-btn" data-panel="cvm-report">CVM Report</button>
+                <button class="nav-btn" data-panel="tee-report">TEE Report</button>
+                <button class="nav-btn" data-panel="td-quote">TD Quote</button>
+                <button class="nav-btn" data-panel="isolation-evidence">Isolation Evidence</button>
+            </div>
+            <div class="nav-section">
+                <h3>TPM</h3>
+                <button class="nav-btn" data-panel="ak-cert">AK Certificate</button>
+                <button class="nav-btn" data-panel="ak-pub">AK Public Key</button>
+                <button class="nav-btn" data-panel="pcrs">PCR Values</button>
+                <button class="nav-btn" data-panel="event-log">Event Log</button>
+            </div>
+            <div class="nav-section">
+                <h3>Attestation</h3>
+                <button class="nav-btn" data-panel="guest-attest">Guest Attest</button>
+                <button class="nav-btn" data-panel="tee-attest">TEE Attest</button>
+            </div>
+            <div class="nav-section">
+                <h3>Tools</h3>
+                <button class="nav-btn" data-panel="parse-token">Parse Token</button>
+            </div>
+        </nav>
+
+        <main id="content">
+            <!-- Diagnose -->
+            <div class="panel active" id="panel-diagnose">
+                <h2>System Diagnostics</h2>
+                <p class="description">Check TPM availability, OS platform, and CVM type detection.</p>
+                <div class="actions">
+                    <button class="btn btn-primary" onclick="runDiagnose()">Run Diagnostics</button>
+                </div>
+                <div class="result" id="result-diagnose"></div>
+            </div>
+
+            <!-- CVM Report -->
+            <div class="panel" id="panel-cvm-report">
+                <h2>CVM Attestation Report</h2>
+                <p class="description">Fetch the full CVM attestation report from the TPM NV index, including report header, TEE report (SNP/TDX/VBS), and runtime claims.</p>
+                <div class="form-group">
+                    <label for="cvm-user-data">User Data (optional)</label>
+                    <input type="text" id="cvm-user-data" placeholder="hex:deadbeef or utf8:hello (≤64 bytes)">
+                    <small>Formats: <code>hex:...</code>, <code>utf8:...</code>, or raw hex string</small>
+                </div>
+                <div class="actions">
+                    <button class="btn btn-primary" onclick="runCvmReport()">Fetch CVM Report</button>
+                </div>
+                <div class="result" id="result-cvm-report"></div>
+            </div>
+
+            <!-- TEE Report -->
+            <div class="panel" id="panel-tee-report">
+                <h2>TEE Report</h2>
+                <p class="description">Fetch and parse the raw TEE-specific report (AMD SEV-SNP, Intel TDX, or VBS).</p>
+                <div class="form-group">
+                    <label for="tee-user-data">User Data (optional)</label>
+                    <input type="text" id="tee-user-data" placeholder="hex:deadbeef or utf8:hello (≤64 bytes)">
+                </div>
+                <div class="actions">
+                    <button class="btn btn-primary" onclick="runTeeReport()">Fetch TEE Report</button>
+                </div>
+                <div class="result" id="result-tee-report"></div>
+            </div>
+
+            <!-- TD Quote -->
+            <div class="panel" id="panel-td-quote">
+                <h2>TD Quote</h2>
+                <p class="description">Fetch and parse an Intel TDX quote from the platform (IMDS). Only available on TDX CVMs.</p>
+                <div class="actions">
+                    <button class="btn btn-primary" onclick="runTdQuote()">Fetch TD Quote</button>
+                </div>
+                <div class="result" id="result-td-quote"></div>
+            </div>
+
+            <!-- Isolation Evidence -->
+            <div class="panel" id="panel-isolation-evidence">
+                <h2>Isolation Evidence</h2>
+                <p class="description">Fetch platform isolation evidence: VCEK certificate chain (SNP) or TD Quote (TDX).</p>
+                <div class="actions">
+                    <button class="btn btn-primary" onclick="runIsolationEvidence()">Fetch Evidence</button>
+                </div>
+                <div class="result" id="result-isolation-evidence"></div>
+            </div>
+
+            <!-- AK Cert -->
+            <div class="panel" id="panel-ak-cert">
+                <h2>AK Certificate</h2>
+                <p class="description">Fetch the Attestation Key certificate from the TPM NV index. Displayed in PEM format.</p>
+                <div class="actions">
+                    <button class="btn btn-primary" onclick="runAkCert()">Fetch AK Cert</button>
+                </div>
+                <div class="result" id="result-ak-cert"></div>
+            </div>
+
+            <!-- AK Pub -->
+            <div class="panel" id="panel-ak-pub">
+                <h2>AK Public Key</h2>
+                <p class="description">Fetch the Attestation Key public area from the TPM.</p>
+                <div class="actions">
+                    <button class="btn btn-primary" onclick="runAkPub()">Fetch AK Pub</button>
+                </div>
+                <div class="result" id="result-ak-pub"></div>
+            </div>
+
+            <!-- PCR Values -->
+            <div class="panel" id="panel-pcrs">
+                <h2>PCR Values</h2>
+                <p class="description">Read Platform Configuration Register values from the TPM across all available hash banks (SHA-1, SHA-256, SHA-384).</p>
+                <div class="form-group">
+                    <label for="pcr-indices">PCR Indices (optional)</label>
+                    <input type="text" id="pcr-indices" placeholder="0,1,2,3,4,5,6,7 (default: 0-23)">
+                    <small>Comma-separated list of PCR indices to read</small>
+                </div>
+                <div class="actions">
+                    <button class="btn btn-primary" onclick="runPcrs()">Read PCRs</button>
+                </div>
+                <div class="result" id="result-pcrs"></div>
+            </div>
+
+            <!-- Event Log -->
+            <div class="panel" id="panel-event-log">
+                <h2>TPM Event Log</h2>
+                <p class="description">Parse the platform TPM event log and replay PCR values. Reads from standard OS locations.</p>
+                <div class="actions">
+                    <button class="btn btn-primary" onclick="runEventLog()">Parse Event Log</button>
+                </div>
+                <div class="result" id="result-event-log"></div>
+            </div>
+
+            <!-- Guest Attest -->
+            <div class="panel" id="panel-guest-attest">
+                <h2>Guest Attestation</h2>
+                <p class="description">Perform full guest attestation: collect CVM + device evidence, build attestation report, and submit to a provider. Returns a JWT token (MAA) or echo (loopback).</p>
+                <div class="form-group">
+                    <label for="ga-provider">Provider</label>
+                    <select id="ga-provider" onchange="toggleMaaEndpoint('ga')">
+                        <option value="loopback">Loopback (echo)</option>
+                        <option value="maa">MAA (Microsoft Azure Attestation)</option>
+                    </select>
+                </div>
+                <div class="form-group" id="ga-endpoint-group" style="display:none">
+                    <label for="ga-endpoint">MAA Endpoint</label>
+                    <input type="text" id="ga-endpoint" value="https://sharedweu.weu.attest.azure.net" placeholder="https://sharedeus.eus.attest.azure.net">
+                    <small>Base URL — the SDK appends the correct API path automatically</small>
+                </div>
+                <div class="form-group">
+                    <label for="ga-payload">Client Payload (optional)</label>
+                    <input type="text" id="ga-payload" placeholder='{"key": "value"}'>
+                    <small>JSON object of key-value pairs</small>
+                </div>
+                <div class="form-group">
+                    <label for="ga-pcrs">PCR Indices (optional)</label>
+                    <input type="text" id="ga-pcrs" placeholder="Default OS selection">
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="ga-decode" checked> Decode returned JWT token
+                    </label>
+                </div>
+                <div class="actions">
+                    <button class="btn btn-primary" onclick="runGuestAttest()">Attest</button>
+                </div>
+                <div class="result" id="result-guest-attest"></div>
+            </div>
+
+            <!-- TEE Attest -->
+            <div class="panel" id="panel-tee-attest">
+                <h2>TEE-Only Attestation</h2>
+                <p class="description">Perform TEE-only platform attestation (no TPM/PCR evidence). Sends SNP report + VCEK chain or TDX quote directly to an MAA platform endpoint.</p>
+                <div class="form-group">
+                    <label for="ta-endpoint">MAA Platform Endpoint</label>
+                    <input type="text" id="ta-endpoint" value="https://sharedweu.weu.attest.azure.net" placeholder="https://sharedweu.weu.attest.azure.net">
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="ta-decode" checked> Decode returned JWT token
+                    </label>
+                </div>
+                <div class="actions">
+                    <button class="btn btn-primary" onclick="runTeeAttest()">Attest</button>
+                </div>
+                <div class="result" id="result-tee-attest"></div>
+            </div>
+
+            <!-- Parse Token -->
+            <div class="panel" id="panel-parse-token">
+                <h2>Parse JWT Token</h2>
+                <p class="description">Decode a JWT attestation token (base64url dot-separated). No signature verification — only decodes header and payload for inspection.</p>
+                <div class="form-group">
+                    <label for="pt-token">JWT Token</label>
+                    <textarea id="pt-token" rows="6" placeholder="Paste a JWT token here (eyJ...)"></textarea>
+                </div>
+                <div class="actions">
+                    <button class="btn btn-primary" onclick="runParseToken()">Parse Token</button>
+                </div>
+                <div class="result" id="result-parse-token"></div>
+            </div>
+        </main>
+    </div>
+
+    <footer>
+        <p>Azure Guest Attestation SDK • Local Server • <span id="footer-time"></span></p>
+    </footer>
+
+    <script src="/app.js"></script>
+</body>
+</html>

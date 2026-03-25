@@ -1,0 +1,43 @@
+[package]
+name = "azure-guest-attest-web"
+version = "0.1.0"
+description = "Web-based interactive tool for Azure Guest Attestation"
+
+# Inherit from workspace
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# Use workspace dependency for the SDK
+azure-guest-attestation-sdk.workspace = true
+
+# Workspace dependencies
+serde.workspace = true
+serde_json.workspace = true
+base64.workspace = true
+hex.workspace = true
+
+# CLI
+clap.workspace = true
+
+# Web framework — pin upper bound for MSRV 1.76 compat
+axum = { version = ">=0.7,<=0.7.9", features = ["json"] }
+tokio = { version = ">=1.36,<=1.44", features = ["rt-multi-thread", "macros", "net"] }
+
+# TLS support for HTTPS mode
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = "0.26"
+rustls-pemfile = "2"
+rcgen = { version = "0.13", default-features = false, features = ["ring", "pem", "crypto"] }
+
+# Low-level connection handling for TLS serve loop
+hyper = { version = "1", features = ["server"] }
+hyper-util = { version = "0.1", features = ["tokio", "server-auto", "http1", "http2"] }
+tower = { version = "0.5", features = ["util"] }
+
+[features]
+default = []
+static = []

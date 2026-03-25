@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Azure Guest Attestation — REST API Reference</title>
+    <style>
+        :root {
+            --bg: #0d1117;
+            --bg-card: #161b22;
+            --bg-code: #1c2128;
+            --border: #30363d;
+            --text: #e6edf3;
+            --text-muted: #8b949e;
+            --accent: #58a6ff;
+            --accent-green: #3fb950;
+            --accent-yellow: #d29922;
+            --accent-orange: #f0883e;
+            --accent-purple: #bc8cff;
+            --method-get: #3fb950;
+            --method-post: #58a6ff;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+        }
+        header {
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--border);
+            padding: 1.5rem 2rem;
+        }
+        header h1 { font-size: 1.5rem; }
+        header p { color: var(--text-muted); margin-top: 0.25rem; }
+        header .links { margin-top: 0.5rem; }
+        header .links a {
+            color: var(--accent);
+            text-decoration: none;
+            margin-right: 1.5rem;
+            font-size: 0.9rem;
+        }
+        header .links a:hover { text-decoration: underline; }
+        .container { max-width: 960px; margin: 0 auto; padding: 2rem; }
+        .section-title {
+            font-size: 1.1rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin: 2rem 0 1rem;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 0.5rem;
+        }
+        .intro {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+        .intro h2 { font-size: 1.1rem; margin-bottom: 0.5rem; }
+        .intro code { background: var(--bg-code); padding: 0.15em 0.4em; border-radius: 3px; font-size: 0.9em; }
+        .intro pre {
+            background: var(--bg-code);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 0.75rem 1rem;
+            margin-top: 0.75rem;
+            overflow-x: auto;
+            font-size: 0.85rem;
+            line-height: 1.5;
+        }
+        .endpoint {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            margin-bottom: 1rem;
+        }
+        .endpoint-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.75rem 1rem;
+            cursor: pointer;
+            user-select: none;
+            border-bottom: 1px solid transparent;
+        }
+        .endpoint-header:hover { background: rgba(88,166,255,0.04); }
+        .endpoint.open .endpoint-header { border-bottom-color: var(--border); }
+        .method {
+            font-family: monospace;
+            font-weight: 700;
+            font-size: 0.8rem;
+            padding: 0.2rem 0.5rem;
+            border-radius: 3px;
+            min-width: 3.5rem;
+            text-align: center;
+            flex-shrink: 0;
+        }
+        .method-get { background: rgba(63,185,80,0.15); color: var(--method-get); }
+        .method-post { background: rgba(88,166,255,0.15); color: var(--method-post); }
+        .endpoint-path {
+            font-family: monospace;
+            font-size: 0.95rem;
+            color: var(--text);
+        }
+        .endpoint-desc {
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            margin-left: auto;
+        }
+        .endpoint-arrow {
+            color: var(--text-muted);
+            transition: transform 0.15s;
+            flex-shrink: 0;
+        }
+        .endpoint.open .endpoint-arrow { transform: rotate(90deg); }
+        .endpoint-body {
+            display: none;
+            padding: 1rem;
+        }
+        .endpoint.open .endpoint-body { display: block; }
+        .endpoint-body p { margin-bottom: 0.75rem; color: var(--text-muted); }
+        .endpoint-body h4 {
+            font-size: 0.85rem;
+            color: var(--accent);
+            margin: 1rem 0 0.5rem;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+        .endpoint-body h4:first-child { margin-top: 0; }
+        .params-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+            margin-bottom: 0.75rem;
+        }
+        .params-table th {
+            text-align: left;
+            padding: 0.4rem 0.6rem;
+            border-bottom: 1px solid var(--border);
+            color: var(--text-muted);
+            font-weight: 600;
+        }
+        .params-table td {
+            padding: 0.4rem 0.6rem;
+            border-bottom: 1px solid var(--border);
+            vertical-align: top;
+        }
+        .params-table td:first-child {
+            font-family: monospace;
+            color: var(--accent-yellow);
+            white-space: nowrap;
+        }
+        .params-table .optional { color: var(--text-muted); font-style: italic; }
+        .params-table .type-badge {
+            font-family: monospace;
+            font-size: 0.8em;
+            color: var(--accent-purple);
+        }
+        pre.curl {
+            background: var(--bg-code);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 0.75rem 1rem;
+            overflow-x: auto;
+            font-size: 0.82rem;
+            line-height: 1.5;
+            position: relative;
+        }
+        pre.curl .comment { color: var(--text-muted); }
+        .response-example {
+            background: var(--bg-code);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 0.75rem 1rem;
+            overflow-x: auto;
+            font-size: 0.82rem;
+            line-height: 1.5;
+        }
+        .toc {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 1rem 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+        .toc h3 { font-size: 0.9rem; margin-bottom: 0.5rem; color: var(--text-muted); }
+        .toc ul { list-style: none; columns: 2; }
+        .toc li { margin-bottom: 0.3rem; }
+        .toc a {
+            color: var(--accent);
+            text-decoration: none;
+            font-size: 0.9rem;
+            font-family: monospace;
+        }
+        .toc a:hover { text-decoration: underline; }
+        .toc .m { font-weight: 700; font-size: 0.75rem; margin-right: 0.3rem; }
+        .toc .mg { color: var(--method-get); }
+        .toc .mp { color: var(--method-post); }
+        footer {
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 0.8rem;
+            padding: 2rem;
+            border-top: 1px solid var(--border);
+            margin-top: 2rem;
+        }
+        @media (max-width: 640px) {
+            .toc ul { columns: 1; }
+            .endpoint-desc { display: none; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>🔐 Azure Guest Attestation — REST API Reference</h1>
+        <p>Programmatic access to all attestation features. All endpoints return JSON.</p>
+        <div class="links">
+            <a href="/">← Web UI</a>
+            <a href="/api">API Index (JSON)</a>
+        </div>
+    </header>
+
+    <div class="container">
+        <div class="intro">
+            <h2>Quick Start</h2>
+            <p>
+                The server exposes a REST API at <code>/api/*</code>.
+                All responses share a common JSON envelope:
+            </p>
+<pre>{
+  "success": true,          <span style="color:var(--text-muted)">// or false on error</span>
+  "data": { ... },          <span style="color:var(--text-muted)">// present on success</span>
+  "error": "message"        <span style="color:var(--text-muted)">// present on failure</span>
+}</pre>
+            <p style="margin-top:0.75rem">
+                <strong>Base URL:</strong> <code>http://&lt;host&gt;:&lt;port&gt;</code> (or <code>https://</code> with TLS).
+                For <code>curl</code> with self-signed certs, add <code>-k</code> (or <code>--insecure</code>).
+            </p>
+        </div>
+
+        <!-- Table of Contents -->
+        <div class="toc">
+            <h3>Endpoints</h3>
+            <ul>
+                <li><span class="m mg">GET</span>  <a href="#ep-diagnose">/api/diagnose</a></li>
+                <li><span class="m mg">GET</span>  <a href="#ep-cvm-report">/api/cvm-report</a></li>
+                <li><span class="m mg">GET</span>  <a href="#ep-tee-report">/api/tee-report</a></li>
+                <li><span class="m mg">GET</span>  <a href="#ep-ak-cert">/api/ak-cert</a></li>
+                <li><span class="m mg">GET</span>  <a href="#ep-ak-pub">/api/ak-pub</a></li>
+                <li><span class="m mg">GET</span>  <a href="#ep-pcrs">/api/pcrs</a></li>
+                <li><span class="m mg">GET</span>  <a href="#ep-event-log">/api/event-log</a></li>
+                <li><span class="m mg">GET</span>  <a href="#ep-td-quote">/api/td-quote</a></li>
+                <li><span class="m mg">GET</span>  <a href="#ep-isolation-evidence">/api/isolation-evidence</a></li>
+                <li><span class="m mp">POST</span> <a href="#ep-guest-attest">/api/guest-attest</a></li>
+                <li><span class="m mp">POST</span> <a href="#ep-tee-attest">/api/tee-attest</a></li>
+                <li><span class="m mp">POST</span> <a href="#ep-parse-token">/api/parse-token</a></li>
+            </ul>
+        </div>
+
+        <!-- ============================================================ -->
+        <div class="section-title">System</div>
+
+        <div class="endpoint" id="ep-diagnose">
+            <div class="endpoint-header" onclick="toggle(this)">
+                <span class="method method-get">GET</span>
+                <span class="endpoint-path">/api/diagnose</span>
+                <span class="endpoint-desc">System diagnostics &amp; TPM availability</span>
+                <span class="endpoint-arrow">▶</span>
+            </div>
+            <div class="endpoint-body">
+                <p>Check OS platform, TPM availability, and CVM type detection. No parameters required.</p>
+                <h4>Example</h4>
+<pre class="curl"><span class="comment"># curl</span>
+curl -s http://localhost:8080/api/diagnose | jq .
+
+<span class="comment"># PowerShell</span>
+Invoke-RestMethod http://localhost:8080/api/diagnose | ConvertTo-Json</pre>
+                <h4>Response</h4>
+<pre class="response-example">{
+  "success": true,
+  "data": {
+    "os": "linux",
+    "arch": "x86_64",
+    "tpm_available": true,
+    "tpm_status": "TPM opened successfully",
+    "cvm_type": "SnpVmReport"
+  }
+}</pre>
+            </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <div class="section-title">Evidence Collection</div>
+
+        <div class="endpoint" id="ep-cvm-report">
+            <div class="endpoint-header" onclick="toggle(this)">
+                <span class="method method-get">GET</span>
+                <span class="endpoint-path">/api/cvm-report</span>
+                <span class="endpoint-desc">Full CVM attestation report</span>
+                <span class="endpoint-arrow">▶</span>
+            </div>
+            <div class="endpoint-body">
+                <p>Fetch the full CVM attestation report from the TPM NV index: report header, TEE report (SNP/TDX/VBS), and runtime claims.</p>
+                <h4>Query Parameters</h4>
+                <table class="params-table">
+                    <tr><th>Name</th><th>Type</th><th>Description</th></tr>
+                    <tr>
+                        <td>user_data</td>
+                        <td><span class="type-badge">string</span></td>
+                        <td class="optional">Optional. Formats: <code>hex:deadbeef</code>, <code>utf8:hello</code>, or raw hex string. ≤64 bytes.</td>
+                    </tr>
+                </table>
+                <h4>Example</h4>
+<pre class="curl"><span class="comment"># Without user data</span>
+curl -s http://localhost:8080/api/cvm-report | jq .
+
+<span class="comment"># With hex user data</span>
+curl -s "http://localhost:8080/api/cvm-report?user_data=hex:deadbeef" | jq .
+
+<span class="comment"># With UTF-8 user data</span>
+curl -s "http://localhost:8080/api/cvm-report?user_data=utf8:hello" | jq .</pre>
+                <h4>Response Fields</h4>
+                <table class="params-table">
+                    <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+                    <tr><td>report_header</td><td><span class="type-badge">object</span></td><td>Signature, version, size, request type, status</td></tr>
+                    <tr><td>runtime_claims_header</td><td><span class="type-badge">object</span></td><td>Data size, version, report type, hash type</td></tr>
+                    <tr><td>tee_report_pretty</td><td><span class="type-badge">string</span></td><td>Human-readable TEE report fields</td></tr>
+                    <tr><td>tee_report_hex</td><td><span class="type-badge">string</span></td><td>Raw TEE report as hex</td></tr>
+                    <tr><td>runtime_claims</td><td><span class="type-badge">object</span></td><td>Parsed runtime claims JSON (if present)</td></tr>
+                </table>
+            </div>
+        </div>
+
+        <div class="endpoint" id="ep-tee-report">
+            <div class="endpoint-header" onclick="toggle(this)">
+                <span class="method method-get">GET</span>
+                <span class="endpoint-path">/api/tee-report</span>
+                <span class="endpoint-desc">Raw TEE report (SNP/TDX/VBS)</span>
+                <span class="endpoint-arrow">▶</span>
+            </div>
+            <div class="endpoint-body">
+                <p>Fetch and parse the raw TEE-specific report. Returns parsed fields and hex encoding.</p>
+                <h4>Query Parameters</h4>
+                <table class="params-table">
+                    <tr><th>Name</th><th>Type</th><th>Description</th></tr>
+                    <tr>
+                        <td>user_data</td>
+                        <td><span class="type-badge">string</span></td>
+                        <td class="optional">Optional. Same format as /api/cvm-report.</td>
+                    </tr>
+                </table>
+                <h4>Example</h4>
+<pre class="curl">curl -s http://localhost:8080/api/tee-report | jq .data.pretty</pre>
+                <h4>Response Fields</h4>
+                <table class="params-table">
+                    <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+                    <tr><td>report_type</td><td><span class="type-badge">string</span></td><td>"SnpVmReport", "TdxVmReport", or "VbsVmReport"</td></tr>
+                    <tr><td>raw_hex</td><td><span class="type-badge">string</span></td><td>Raw report bytes as hex</td></tr>
+                    <tr><td>size_bytes</td><td><span class="type-badge">number</span></td><td>Report size in bytes</td></tr>
+                    <tr><td>pretty</td><td><span class="type-badge">string</span></td><td>Human-readable parsed fields</td></tr>
+                </table>
+            </div>
+        </div>
+
+        <div class="endpoint" id="ep-td-quote">
+            <div class="endpoint-header" onclick="toggle(this)">
+                <span class="method method-get">GET</span>
+                <span class="endpoint-path">/api/td-quote</span>
+                <span class="endpoint-desc">Intel TDX quote (TDX CVMs only)</span>
+                <span class="endpoint-arrow">▶</span>
+            </div>
+            <div class="endpoint-body">
+                <p>Fetch and parse an Intel TDX quote from the platform via IMDS. Only available on TDX CVMs.</p>
+                <h4>Example</h4>
+<pre class="curl">curl -s http://localhost:8080/api/td-quote | jq .</pre>
+                <h4>Response Fields</h4>
+                <table class="params-table">
+                    <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+                    <tr><td>hex</td><td><span class="type-badge">string</span></td><td>Quote bytes as hex</td></tr>
+                    <tr><td>base64</td><td><span class="type-badge">string</span></td><td>Quote bytes as base64</td></tr>
+                    <tr><td>size_bytes</td><td><span class="type-badge">number</span></td><td>Quote size</td></tr>
+                    <tr><td>pretty</td><td><span class="type-badge">string</span></td><td>Parsed quote fields (if parseable)</td></tr>
+                </table>
+            </div>
+        </div>
+
+        <div class="endpoint" id="ep-isolation-evidence">
+            <div class="endpoint-header" onclick="toggle(this)">
+                <span class="method method-get">GET</span>
+                <span class="endpoint-path">/api/isolation-evidence</span>
+                <span class="endpoint-desc">Platform isolation evidence (VCEK chain / TD quote)</span>
+                <span class="endpoint-arrow">▶</span>
+            </div>
+            <div class="endpoint-body">
+                <p>Fetch platform isolation evidence: VCEK certificate chain (SNP) or TD Quote (TDX). Used by attestation providers to verify the TEE.</p>
+                <h4>Example</h4>
+<pre class="curl">curl -s http://localhost:8080/api/isolation-evidence | jq .data.type</pre>
+                <h4>Response Fields</h4>
+                <table class="params-table">
+                    <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+                    <tr><td>type</td><td><span class="type-badge">string</span></td><td>"SNP VCEK Chain" or "TDX TD Quote"</td></tr>
+                    <tr><td>hex</td><td><span class="type-badge">string</span></td><td>Evidence bytes as hex</td></tr>
+                    <tr><td>base64</td><td><span class="type-badge">string</span></td><td>Evidence bytes as base64</td></tr>
+                    <tr><td>size_bytes</td><td><span class="type-badge">number</span></td><td>Evidence size</td></tr>
+                </table>
+            </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <div class="section-title">TPM</div>
+
+        <div class="endpoint" id="ep-ak-cert">
+            <div class="endpoint-header" onclick="toggle(this)">
+                <span class="method method-get">GET</span>
+                <span class="endpoint-path">/api/ak-cert</span>
+                <span class="endpoint-desc">Attestation Key certificate (PEM)</span>
+                <span class="endpoint-arrow">▶</span>
+            </div>
+            <div class="endpoint-body">
+                <p>Fetch the Attestation Key certificate from the TPM NV index. Returns PEM and base64 encodings.</p>
+                <h4>Example</h4>
+<pre class="curl"><span class="comment"># Get full JSON</span>
+curl -s http://localhost:8080/api/ak-cert | jq .
+
+<span class="comment"># Save PEM to file</span>
+curl -s http://localhost:8080/api/ak-cert | jq -r .data.pem &gt; ak-cert.pem
+
+<span class="comment"># Inspect with openssl</span>
+curl -s http://localhost:8080/api/ak-cert | jq -r .data.pem | openssl x509 -text -noout</pre>
+                <h4>Response Fields</h4>
+                <table class="params-table">
+                    <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+                    <tr><td>pem</td><td><span class="type-badge">string</span></td><td>Certificate in PEM format</td></tr>
+                    <tr><td>base64</td><td><span class="type-badge">string</span></td><td>DER bytes as base64</td></tr>
+                    <tr><td>size_bytes</td><td><span class="type-badge">number</span></td><td>DER certificate size</td></tr>
+                </table>
+            </div>
+        </div>
+
+        <div class="endpoint" id="ep-ak-pub">
+            <div class="endpoint-header" onclick="toggle(this)">
+                <span class="method method-get">GET</span>
+                <span class="endpoint-path">/api/ak-pub</span>
+                <span class="endpoint-desc">Attestation Key public area</span>
+                <span class="endpoint-arrow">▶</span>
+            </div>
+            <div class="endpoint-body">
+                <p>Fetch the Attestation Key public area (TPM2B_PUBLIC) from the TPM.</p>
+                <h4>Example</h4>
+<pre class="curl">curl -s http://localhost:8080/api/ak-pub | jq .data</pre>
+                <h4>Response Fields</h4>
+                <table class="params-table">
+                    <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+                    <tr><td>hex</td><td><span class="type-badge">string</span></td><td>Public area bytes as hex</td></tr>
+                    <tr><td>size_bytes</td><td><span class="type-badge">number</span></td><td>Public area size</td></tr>
+                </table>
+            </div>
+        </div>
+
+        <div class="endpoint" id="ep-pcrs">
+            <div class="endpoint-header" onclick="toggle(this)">
+                <span class="method method-get">GET</span>
+                <span class="endpoint-path">/api/pcrs</span>
+                <span class="endpoint-desc">PCR values (SHA-1 / SHA-256 / SHA-384)</span>
+                <span class="endpoint-arrow">▶</span>
+            </div>
+            <div class="endpoint-body">
+                <p>Read Platform Configuration Register values from the TPM across all available hash banks.</p>
+                <h4>Query Parameters</h4>
+                <table class="params-table">
+                    <tr><th>Name</th><th>Type</th><th>Description</th></tr>
+                    <tr>
+                        <td>indices</td>
+                        <td><span class="type-badge">string</span></td>
+                        <td class="optional">Optional. Comma-separated PCR indices. Default: 0-23.</td>
+                    </tr>
+                </table>
+                <h4>Example</h4>
+<pre class="curl"><span class="comment"># All PCRs</span>
+curl -s http://localhost:8080/api/pcrs | jq .
+
+<span class="comment"># Specific PCRs</span>
+curl -s "http://localhost:8080/api/pcrs?indices=0,1,4,7" | jq .
+
+<span class="comment"># Just SHA-256 bank</span>
+curl -s http://localhost:8080/api/pcrs | jq '.data.banks["SHA-256"]'</pre>
+                <h4>Response Fields</h4>
+                <table class="params-table">
+                    <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+                    <tr><td>banks</td><td><span class="type-badge">object</span></td><td>Map of hash algorithm → { "PCR[i]": "hex_digest" }</td></tr>
+                    <tr><td>notes</td><td><span class="type-badge">string[]</span></td><td>Errors for unsupported banks (if any)</td></tr>
+                </table>
+            </div>
+        </div>
+
+        <div class="endpoint" id="ep-event-log">
+            <div class="endpoint-header" onclick="toggle(this)">
+                <span class="method method-get">GET</span>
+                <span class="endpoint-path">/api/event-log</span>
+                <span class="endpoint-desc">TPM event log with PCR replay</span>
+                <span class="endpoint-arrow">▶</span>
+            </div>
+            <div class="endpoint-body">
+                <p>Parse the platform TPM event log and replay PCR values. Reads from standard OS locations
+                   (<code>/sys/kernel/security/tpm0/binary_bios_measurements</code> on Linux,
+                    <code>C:\Windows\Logs\MeasuredBoot\*.log</code> on Windows).</p>
+                <h4>Example</h4>
+<pre class="curl"><span class="comment"># Full log</span>
+curl -s http://localhost:8080/api/event-log | jq .
+
+<span class="comment"># Event count only</span>
+curl -s http://localhost:8080/api/event-log | jq .data.event_count
+
+<span class="comment"># Replayed PCR values</span>
+curl -s http://localhost:8080/api/event-log | jq .data.replayed_pcrs_sha256</pre>
+                <h4>Response Fields</h4>
+                <table class="params-table">
+                    <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+                    <tr><td>event_count</td><td><span class="type-badge">number</span></td><td>Total events parsed</td></tr>
+                    <tr><td>events</td><td><span class="type-badge">array</span></td><td>Array of { pcr_index, event_type, event_type_name, digest_hex, event_data_size }</td></tr>
+                    <tr><td>replayed_pcrs_sha256</td><td><span class="type-badge">object</span></td><td>PCR values replayed from events using SHA-256</td></tr>
+                </table>
+            </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <div class="section-title">Attestation</div>
+
+        <div class="endpoint" id="ep-guest-attest">
+            <div class="endpoint-header" onclick="toggle(this)">
+                <span class="method method-post">POST</span>
+                <span class="endpoint-path">/api/guest-attest</span>
+                <span class="endpoint-desc">Full guest attestation (TPM + TEE)</span>
+                <span class="endpoint-arrow">▶</span>
+            </div>
+            <div class="endpoint-body">
+                <p>Perform full guest attestation: collect CVM + device evidence, build an attestation report, and submit to a provider.
+                   Returns a JWT token (MAA) or echo (loopback).</p>
+                <h4>Request Body (JSON)</h4>
+                <table class="params-table">
+                    <tr><th>Field</th><th>Type</th><th>Default</th><th>Description</th></tr>
+                    <tr>
+                        <td>provider</td>
+                        <td><span class="type-badge">string</span></td>
+                        <td><code>"loopback"</code></td>
+                        <td><code>"loopback"</code> (echo) or <code>"maa"</code> (Azure Attestation)</td>
+                    </tr>
+                    <tr>
+                        <td>endpoint</td>
+                        <td><span class="type-badge">string</span></td>
+                        <td class="optional">—</td>
+                        <td>MAA endpoint URL (required when provider is <code>"maa"</code>)</td>
+                    </tr>
+                    <tr>
+                        <td>client_payload</td>
+                        <td><span class="type-badge">string</span></td>
+                        <td class="optional">—</td>
+                        <td>Optional JSON string of key-value pairs</td>
+                    </tr>
+                    <tr>
+                        <td>pcr_indices</td>
+                        <td><span class="type-badge">number[]</span></td>
+                        <td class="optional">OS default</td>
+                        <td>PCR indices to include in attestation</td>
+                    </tr>
+                    <tr>
+                        <td>decode_token</td>
+                        <td><span class="type-badge">boolean</span></td>
+                        <td><code>false</code></td>
+                        <td>Decode the returned JWT and include header/payload</td>
+                    </tr>
+                </table>
+                <h4>Example</h4>
+<pre class="curl"><span class="comment"># Loopback (echo) — for testing</span>
+curl -s -X POST http://localhost:8080/api/guest-attest \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"loopback","decode_token":true}' | jq .
+
+<span class="comment"># MAA attestation</span>
+curl -s -X POST http://localhost:8080/api/guest-attest \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": "maa",
+    "endpoint": "https://sharedweu.weu.attest.azure.net",
+    "decode_token": true
+  }' | jq .
+
+<span class="comment"># PowerShell</span>
+$body = @{
+    provider = "maa"
+    endpoint = "https://sharedweu.weu.attest.azure.net"
+    decode_token = $true
+} | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri http://localhost:8080/api/guest-attest `
+  -ContentType "application/json" -Body $body | ConvertTo-Json -Depth 10</pre>
+                <h4>Response Fields</h4>
+                <table class="params-table">
+                    <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+                    <tr><td>pcrs</td><td><span class="type-badge">object</span></td><td>PCR values included in the attestation</td></tr>
+                    <tr><td>request_json</td><td><span class="type-badge">string</span></td><td>Raw JSON request sent to the provider</td></tr>
+                    <tr><td>encoded_request</td><td><span class="type-badge">string</span></td><td>Base64-encoded request</td></tr>
+                    <tr><td>token</td><td><span class="type-badge">string</span></td><td>JWT token returned by the provider</td></tr>
+                    <tr><td>decrypted</td><td><span class="type-badge">boolean</span></td><td>Whether the token was decrypted from JWE envelope</td></tr>
+                    <tr><td>token_header</td><td><span class="type-badge">object</span></td><td>Decoded JWT header (when decode_token=true)</td></tr>
+                    <tr><td>token_payload</td><td><span class="type-badge">object</span></td><td>Decoded JWT payload / claims (when decode_token=true)</td></tr>
+                </table>
+            </div>
+        </div>
+
+        <div class="endpoint" id="ep-tee-attest">
+            <div class="endpoint-header" onclick="toggle(this)">
+                <span class="method method-post">POST</span>
+                <span class="endpoint-path">/api/tee-attest</span>
+                <span class="endpoint-desc">TEE-only attestation (no TPM/PCR)</span>
+                <span class="endpoint-arrow">▶</span>
+            </div>
+            <div class="endpoint-body">
+                <p>Perform TEE-only platform attestation without TPM/PCR evidence.
+                   Sends SNP report + VCEK chain or TDX quote directly to an MAA platform endpoint.</p>
+                <h4>Request Body (JSON)</h4>
+                <table class="params-table">
+                    <tr><th>Field</th><th>Type</th><th>Default</th><th>Description</th></tr>
+                    <tr>
+                        <td>endpoint</td>
+                        <td><span class="type-badge">string</span></td>
+                        <td><code>"https://sharedweu..."</code></td>
+                        <td>MAA platform endpoint URL</td>
+                    </tr>
+                    <tr>
+                        <td>decode_token</td>
+                        <td><span class="type-badge">boolean</span></td>
+                        <td><code>false</code></td>
+                        <td>Decode the returned JWT</td>
+                    </tr>
+                </table>
+                <h4>Example</h4>
+<pre class="curl">curl -s -X POST http://localhost:8080/api/tee-attest \
+  -H "Content-Type: application/json" \
+  -d '{
+    "endpoint": "https://sharedweu.weu.attest.azure.net",
+    "decode_token": true
+  }' | jq .</pre>
+                <h4>Response Fields</h4>
+                <table class="params-table">
+                    <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+                    <tr><td>request_json</td><td><span class="type-badge">string</span></td><td>Raw JSON request sent to MAA</td></tr>
+                    <tr><td>token</td><td><span class="type-badge">string</span></td><td>JWT token returned by MAA</td></tr>
+                    <tr><td>token_header</td><td><span class="type-badge">object</span></td><td>Decoded JWT header</td></tr>
+                    <tr><td>token_payload</td><td><span class="type-badge">object</span></td><td>Decoded JWT payload / claims</td></tr>
+                </table>
+            </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <div class="section-title">Tools</div>
+
+        <div class="endpoint" id="ep-parse-token">
+            <div class="endpoint-header" onclick="toggle(this)">
+                <span class="method method-post">POST</span>
+                <span class="endpoint-path">/api/parse-token</span>
+                <span class="endpoint-desc">Decode a JWT attestation token</span>
+                <span class="endpoint-arrow">▶</span>
+            </div>
+            <div class="endpoint-body">
+                <p>Decode a JWT attestation token into its header and payload. No TPM required — pure parsing.
+                   Useful for inspecting tokens obtained from other sources.</p>
+                <h4>Request Body (JSON)</h4>
+                <table class="params-table">
+                    <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+                    <tr>
+                        <td>token</td>
+                        <td><span class="type-badge">string</span></td>
+                        <td>The JWT string to decode (required)</td>
+                    </tr>
+                </table>
+                <h4>Example</h4>
+<pre class="curl">curl -s -X POST http://localhost:8080/api/parse-token \
+  -H "Content-Type: application/json" \
+  -d '{"token":"eyJhbGciOi..."}' | jq .</pre>
+                <h4>Response Fields</h4>
+                <table class="params-table">
+                    <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+                    <tr><td>header</td><td><span class="type-badge">object</span></td><td>JWT header (alg, kid, typ, …)</td></tr>
+                    <tr><td>payload</td><td><span class="type-badge">object</span></td><td>JWT payload / claims</td></tr>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        Azure Guest Attestation SDK · REST API Reference
+    </footer>
+
+    <script>
+    function toggle(header) {
+        header.closest('.endpoint').classList.toggle('open');
+    }
+    // Open endpoint if navigated via anchor
+    const hash = window.location.hash;
+    if (hash) {
+        const el = document.querySelector(hash);
+        if (el && el.classList.contains('endpoint')) el.classList.add('open');
+    }
+    </script>
+</body>
+</html>

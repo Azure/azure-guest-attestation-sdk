@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/azure-guest-attestation-sdk",
     "tools/azure-guest-attest",
+    "tools/azure-guest-attest-web",
 ]
 
 # ---------------------------------------------------------------------------
