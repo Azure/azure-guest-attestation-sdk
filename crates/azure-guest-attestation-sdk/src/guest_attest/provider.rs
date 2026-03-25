@@ -381,4 +381,103 @@ mod tests {
             "https://example.attest.azure.net/attest/AzureGuest?api-version=2020-10-01"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // submit_to_provider with LoopbackProvider
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn submit_to_provider_loopback_returns_token() {
+        let provider = LoopbackProvider;
+        let result = submit_to_provider("test_request_data", &provider).unwrap();
+        assert!(result.is_some());
+        let token = result.unwrap();
+        let decoded = base64_url_decode(&token).unwrap();
+        let json_str = String::from_utf8(decoded).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(v["request"], "test_request_data");
+    }
+
+    // -----------------------------------------------------------------------
+    // submit_to_provider with a failing provider (tests retry logic)
+    // -----------------------------------------------------------------------
+
+    struct FailingProvider {
+        fail_count: std::cell::Cell<u32>,
+        max_failures: u32,
+    }
+
+    impl AttestationProvider for FailingProvider {
+        fn attest_guest(&self, encoded_request: &str) -> io::Result<Option<String>> {
+            let current = self.fail_count.get();
+            if current < self.max_failures {
+                self.fail_count.set(current + 1);
+                Err(io::Error::other("transient failure"))
+            } else {
+                Ok(Some(format!("success:{encoded_request}")))
+            }
+        }
+    }
+
+    #[test]
+    fn submit_to_provider_retries_on_transient_failure() {
+        let provider = FailingProvider {
+            fail_count: std::cell::Cell::new(0),
+            max_failures: 2, // fails twice, succeeds on 3rd attempt
+        };
+        let result = submit_to_provider("retry_test", &provider).unwrap();
+        assert_eq!(result, Some("success:retry_test".to_string()));
+        assert_eq!(provider.fail_count.get(), 2);
+    }
+
+    #[test]
+    fn submit_to_provider_exhausts_retries_returns_error() {
+        let provider = FailingProvider {
+            fail_count: std::cell::Cell::new(0),
+            max_failures: 10, // always fails, exceeds max_retries (3)
+        };
+        let result = submit_to_provider("exhaust_test", &provider);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("transient failure"));
+    }
+
+    /// Provider that always returns Ok(None)
+    struct NoneProvider;
+
+    impl AttestationProvider for NoneProvider {
+        fn attest_guest(&self, _encoded_request: &str) -> io::Result<Option<String>> {
+            Ok(None)
+        }
+    }
+
+    #[test]
+    fn submit_to_provider_none_result() {
+        let provider = NoneProvider;
+        let result = submit_to_provider("none_test", &provider).unwrap();
+        assert!(result.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // resolve_maa_url additional cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn resolve_maa_url_empty_base() {
+        let url = resolve_maa_url("", GUEST_ATTEST_PATH, GUEST_ATTEST_API_VERSION);
+        assert_eq!(url, "/attest/AzureGuest?api-version=2020-10-01");
+    }
+
+    #[test]
+    fn resolve_maa_url_multiple_trailing_slashes() {
+        let url = resolve_maa_url(
+            "https://example.net///",
+            GUEST_ATTEST_PATH,
+            GUEST_ATTEST_API_VERSION,
+        );
+        assert_eq!(
+            url,
+            "https://example.net/attest/AzureGuest?api-version=2020-10-01"
+        );
+    }
 }

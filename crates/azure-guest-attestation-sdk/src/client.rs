@@ -776,4 +776,198 @@ mod tests {
         assert!(s.contains("tok"));
         assert!(s.contains("[0, 1, 7]"));
     }
+
+    // -----------------------------------------------------------------------
+    // build_isolation_info
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn build_isolation_info_no_evidence_gives_trusted_launch() {
+        let info = build_isolation_info(None, None).unwrap();
+        assert!(matches!(info.vm_type, IsolationType::TrustedLaunch));
+        assert!(info.evidence.is_none());
+    }
+
+    #[test]
+    fn build_isolation_info_snp_with_endorsement() {
+        let evidence = CvmEvidence {
+            report_type: report::CvmReportType::SnpVmReport,
+            tee_report: vec![0xAA; report::SNP_VM_REPORT_SIZE],
+            runtime_claims: None,
+            runtime_data: vec![0xCC; 64],
+            platform_quote: vec![],
+        };
+        let endorsement = Endorsement {
+            kind: EndorsementKind::Vcek,
+            data: vec![0xDD; 128],
+        };
+        let info = build_isolation_info(Some(&evidence), Some(&endorsement)).unwrap();
+        assert!(matches!(info.vm_type, IsolationType::SevSnp));
+        let ev = info.evidence.unwrap();
+        match &ev.tee_proof {
+            TeeProof::Snp {
+                snp_report,
+                vcek_chain,
+            } => {
+                assert_eq!(snp_report, &evidence.tee_report);
+                assert_eq!(vcek_chain, &endorsement.data);
+            }
+            _ => panic!("expected Snp proof"),
+        }
+        assert_eq!(ev.runtime_data, vec![0xCC; 64]);
+    }
+
+    #[test]
+    fn build_isolation_info_tdx_with_platform_quote() {
+        let td_quote = vec![0xBB; 256];
+        let evidence = CvmEvidence {
+            report_type: report::CvmReportType::TdxVmReport,
+            tee_report: vec![0xAA; report::TDX_VM_REPORT_SIZE],
+            runtime_claims: None,
+            runtime_data: vec![0xEE; 32],
+            platform_quote: td_quote.clone(),
+        };
+        let info = build_isolation_info(Some(&evidence), None).unwrap();
+        assert!(matches!(info.vm_type, IsolationType::Tdx));
+        let ev = info.evidence.unwrap();
+        match &ev.tee_proof {
+            TeeProof::Tdx { td_quote: q } => {
+                assert_eq!(q, &td_quote);
+            }
+            _ => panic!("expected Tdx proof"),
+        }
+    }
+
+    #[test]
+    fn build_isolation_info_unsupported_report_type_returns_error() {
+        let evidence = CvmEvidence {
+            report_type: report::CvmReportType::VbsVmReport,
+            tee_report: vec![],
+            runtime_claims: None,
+            runtime_data: vec![],
+            platform_quote: vec![],
+        };
+        let err = build_isolation_info(Some(&evidence), None).unwrap_err();
+        assert!(
+            err.to_string().contains("Unsupported"),
+            "expected unsupported error: {err}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // make_provider
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn make_provider_maa() {
+        let provider = Provider::maa("https://test.attest.azure.net");
+        let boxed = make_provider(&provider);
+        // Should not panic. MaaProvider is created successfully.
+        // We can test via LoopbackProvider to verify trait dispatch works.
+        let _ = boxed;
+    }
+
+    #[test]
+    fn make_provider_loopback_returns_token() {
+        let provider = Provider::Loopback;
+        let boxed = make_provider(&provider);
+        let result = boxed.attest_guest("test_data").unwrap();
+        assert!(result.is_some());
+    }
+
+    // -----------------------------------------------------------------------
+    // AttestationReport struct
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn attestation_report_debug_format() {
+        let r = AttestationReport {
+            json: "{\"test\":true}".into(),
+            pcrs: vec![0, 7],
+        };
+        let s = format!("{r:?}");
+        assert!(s.contains("test"));
+        assert!(s.contains("[0, 7]"));
+    }
+
+    // -----------------------------------------------------------------------
+    // DeviceEvidence struct
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn device_evidence_debug_format() {
+        let de = DeviceEvidence {
+            tpm_info: TpmInfo {
+                ak_cert: vec![],
+                ak_pub: vec![],
+                pcr_quote: vec![],
+                pcr_sig: vec![],
+                pcr_set: vec![0],
+                pcrs: vec![],
+                enc_key_pub: vec![],
+                enc_key_certify_info: vec![],
+                enc_key_certify_info_sig: vec![],
+            },
+            pcrs: vec![0, 1],
+        };
+        let s = format!("{de:?}");
+        assert!(s.contains("[0, 1]"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Endorsement / EndorsementKind
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn endorsement_debug_format() {
+        let e = Endorsement {
+            kind: EndorsementKind::Vcek,
+            data: vec![1, 2, 3],
+        };
+        let s = format!("{e:?}");
+        assert!(s.contains("Vcek"));
+    }
+
+    #[test]
+    fn endorsement_clone() {
+        let e = Endorsement {
+            kind: EndorsementKind::Vcek,
+            data: vec![1, 2, 3],
+        };
+        let e2 = e.clone();
+        assert_eq!(e2.kind, EndorsementKind::Vcek);
+        assert_eq!(e2.data, vec![1, 2, 3]);
+    }
+
+    // -----------------------------------------------------------------------
+    // CvmEvidence
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn cvm_evidence_debug_format() {
+        let ev = CvmEvidence {
+            report_type: report::CvmReportType::SnpVmReport,
+            tee_report: vec![0xAA],
+            runtime_claims: None,
+            runtime_data: vec![],
+            platform_quote: vec![],
+        };
+        let s = format!("{ev:?}");
+        assert!(s.contains("SnpVmReport"));
+    }
+
+    #[test]
+    fn cvm_evidence_clone() {
+        let ev = CvmEvidence {
+            report_type: report::CvmReportType::TdxVmReport,
+            tee_report: vec![1, 2],
+            runtime_claims: None,
+            runtime_data: vec![3, 4],
+            platform_quote: vec![5],
+        };
+        let ev2 = ev.clone();
+        assert_eq!(ev2.report_type, report::CvmReportType::TdxVmReport);
+        assert_eq!(ev2.tee_report, vec![1, 2]);
+        assert_eq!(ev2.platform_quote, vec![5]);
+    }
 }

@@ -1141,4 +1141,460 @@ mod tests {
         assert_eq!(deserialized.evidence_field, "quote");
         assert_eq!(deserialized.report_type, "TdxVmReport");
     }
+
+    // -----------------------------------------------------------------------
+    // parse_token — early-return / validation paths
+    // -----------------------------------------------------------------------
+    // These tests exercise the format-validation branches that return Ok(None)
+    // or Err before the TPM decrypt call is reached.
+    // Gated behind vtpm-tests because `Tpm::open_reference_for_tests()` is
+    // only available with that feature.
+
+    #[cfg(feature = "vtpm-tests")]
+    fn dummy_tpm_for_parse_token() -> crate::tpm::device::Tpm {
+        crate::tpm::device::Tpm::open_reference_for_tests()
+            .expect("reference TPM for parse_token tests")
+    }
+
+    #[cfg(feature = "vtpm-tests")]
+    fn json_to_b64url(v: &serde_json::Value) -> String {
+        base64_url_encode(v.to_string().as_bytes())
+    }
+
+    #[cfg(feature = "vtpm-tests")]
+    #[test]
+    fn parse_token_invalid_base64_returns_none() {
+        let tpm = dummy_tpm_for_parse_token();
+        let result = parse_token(&tpm, 0, &[], "!!!not-base64!!!").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[cfg(feature = "vtpm-tests")]
+    #[test]
+    fn parse_token_non_utf8_returns_none() {
+        let tpm = dummy_tpm_for_parse_token();
+        let bad_bytes: Vec<u8> = vec![0xFF, 0xFE, 0xFD];
+        let encoded = base64_url_encode(&bad_bytes);
+        let result = parse_token(&tpm, 0, &[], &encoded).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[cfg(feature = "vtpm-tests")]
+    #[test]
+    fn parse_token_non_json_returns_none() {
+        let tpm = dummy_tpm_for_parse_token();
+        let encoded = base64_url_encode(b"this is not json");
+        let result = parse_token(&tpm, 0, &[], &encoded).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[cfg(feature = "vtpm-tests")]
+    #[test]
+    fn parse_token_missing_encrypted_inner_key_returns_none() {
+        let tpm = dummy_tpm_for_parse_token();
+        let v = serde_json::json!({
+            "EncryptionParams": {"Iv": "AAAA"},
+            "AuthenticationData": "BBBB",
+            "Jwt": "CCCC"
+        });
+        let result = parse_token(&tpm, 0, &[], &json_to_b64url(&v)).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[cfg(feature = "vtpm-tests")]
+    #[test]
+    fn parse_token_missing_encryption_params_returns_none() {
+        let tpm = dummy_tpm_for_parse_token();
+        let v = serde_json::json!({
+            "EncryptedInnerKey": "AAAA",
+            "AuthenticationData": "BBBB",
+            "Jwt": "CCCC"
+        });
+        let result = parse_token(&tpm, 0, &[], &json_to_b64url(&v)).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[cfg(feature = "vtpm-tests")]
+    #[test]
+    fn parse_token_missing_iv_returns_none() {
+        let tpm = dummy_tpm_for_parse_token();
+        let v = serde_json::json!({
+            "EncryptedInnerKey": "AAAA",
+            "EncryptionParams": {},
+            "AuthenticationData": "BBBB",
+            "Jwt": "CCCC"
+        });
+        let result = parse_token(&tpm, 0, &[], &json_to_b64url(&v)).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[cfg(feature = "vtpm-tests")]
+    #[test]
+    fn parse_token_missing_auth_data_returns_none() {
+        let tpm = dummy_tpm_for_parse_token();
+        let v = serde_json::json!({
+            "EncryptedInnerKey": "AAAA",
+            "EncryptionParams": {"Iv": "AAAA"},
+            "Jwt": "CCCC"
+        });
+        let result = parse_token(&tpm, 0, &[], &json_to_b64url(&v)).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[cfg(feature = "vtpm-tests")]
+    #[test]
+    fn parse_token_missing_jwt_returns_none() {
+        let tpm = dummy_tpm_for_parse_token();
+        let v = serde_json::json!({
+            "EncryptedInnerKey": "AAAA",
+            "EncryptionParams": {"Iv": "AAAA"},
+            "AuthenticationData": "BBBB"
+        });
+        let result = parse_token(&tpm, 0, &[], &json_to_b64url(&v)).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[cfg(feature = "vtpm-tests")]
+    #[test]
+    fn parse_token_bad_iv_length_returns_error() {
+        use base64::engine::general_purpose::STANDARD;
+        let tpm = dummy_tpm_for_parse_token();
+        let iv = STANDARD.encode(vec![0u8; 8]);
+        let auth_tag = STANDARD.encode(vec![0u8; 16]);
+        let v = serde_json::json!({
+            "EncryptedInnerKey": STANDARD.encode(vec![0u8; 32]),
+            "EncryptionParams": {"Iv": iv},
+            "AuthenticationData": auth_tag,
+            "Jwt": STANDARD.encode(vec![0u8; 64])
+        });
+        let err = parse_token(&tpm, 0, &[], &json_to_b64url(&v)).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(
+            err.to_string().contains("12-byte IV"),
+            "error message should mention IV: {err}"
+        );
+    }
+
+    #[cfg(feature = "vtpm-tests")]
+    #[test]
+    fn parse_token_bad_auth_tag_length_returns_error() {
+        use base64::engine::general_purpose::STANDARD;
+        let tpm = dummy_tpm_for_parse_token();
+        let iv = STANDARD.encode(vec![0u8; 12]);
+        let auth_tag = STANDARD.encode(vec![0u8; 8]);
+        let v = serde_json::json!({
+            "EncryptedInnerKey": STANDARD.encode(vec![0u8; 32]),
+            "EncryptionParams": {"Iv": iv},
+            "AuthenticationData": auth_tag,
+            "Jwt": STANDARD.encode(vec![0u8; 64])
+        });
+        let err = parse_token(&tpm, 0, &[], &json_to_b64url(&v)).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(
+            err.to_string().contains("16-byte GCM tag"),
+            "error message should mention GCM tag: {err}"
+        );
+    }
+
+    #[cfg(feature = "vtpm-tests")]
+    #[test]
+    fn parse_token_empty_json_object_returns_none() {
+        let tpm = dummy_tpm_for_parse_token();
+        let v = serde_json::json!({});
+        let result = parse_token(&tpm, 0, &[], &json_to_b64url(&v)).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[cfg(feature = "vtpm-tests")]
+    #[test]
+    fn parse_token_non_string_fields_return_none() {
+        let tpm = dummy_tpm_for_parse_token();
+        let v = serde_json::json!({
+            "EncryptedInnerKey": 12345,
+            "EncryptionParams": {"Iv": "AAAA"},
+            "AuthenticationData": "BBBB",
+            "Jwt": "CCCC"
+        });
+        let result = parse_token(&tpm, 0, &[], &json_to_b64url(&v)).unwrap();
+        assert!(result.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // client_payload_b64 edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn client_payload_non_object_json_produces_empty_map() {
+        // Array payload should produce empty ClientPayload
+        let params = GuestAttestationParameters {
+            protocol_version: "2.0".into(),
+            os_type: "Linux".into(),
+            os_distro: "Test".into(),
+            os_version_major: 0,
+            os_version_minor: 0,
+            os_build: "".into(),
+            tcg_logs: vec![],
+            client_payload: "[1, 2, 3]".into(),
+            tpm_info: TpmInfo {
+                ak_cert: vec![],
+                ak_pub: vec![],
+                pcr_quote: vec![],
+                pcr_sig: vec![],
+                pcr_set: vec![],
+                pcrs: vec![],
+                enc_key_pub: vec![],
+                enc_key_certify_info: vec![],
+                enc_key_certify_info_sig: vec![],
+            },
+            isolation: IsolationInfo {
+                vm_type: IsolationType::TrustedLaunch,
+                evidence: None,
+            },
+        };
+        let json = params.to_json_string();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(v["ClientPayload"].is_object());
+        assert_eq!(v["ClientPayload"].as_object().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn client_payload_numeric_values_encoded_as_string() {
+        use base64::engine::general_purpose::STANDARD;
+        let params = GuestAttestationParameters {
+            protocol_version: "2.0".into(),
+            os_type: "Linux".into(),
+            os_distro: "Test".into(),
+            os_version_major: 0,
+            os_version_minor: 0,
+            os_build: "".into(),
+            tcg_logs: vec![],
+            client_payload: r#"{"count":42,"flag":true}"#.into(),
+            tpm_info: TpmInfo {
+                ak_cert: vec![],
+                ak_pub: vec![],
+                pcr_quote: vec![],
+                pcr_sig: vec![],
+                pcr_set: vec![],
+                pcrs: vec![],
+                enc_key_pub: vec![],
+                enc_key_certify_info: vec![],
+                enc_key_certify_info_sig: vec![],
+            },
+            isolation: IsolationInfo {
+                vm_type: IsolationType::TrustedLaunch,
+                evidence: None,
+            },
+        };
+        let json = params.to_json_string();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let cp = v["ClientPayload"].as_object().unwrap();
+        assert_eq!(cp.len(), 2);
+        // Values should be base64-encoded strings
+        let count_b64 = cp["count"].as_str().unwrap();
+        let decoded = STANDARD.decode(count_b64).unwrap();
+        assert_eq!(String::from_utf8(decoded).unwrap(), "42");
+        let flag_b64 = cp["flag"].as_str().unwrap();
+        let decoded = STANDARD.decode(flag_b64).unwrap();
+        assert_eq!(String::from_utf8(decoded).unwrap(), "true");
+    }
+
+    #[test]
+    fn client_payload_nested_object_value_serialized() {
+        use base64::engine::general_purpose::STANDARD;
+        let params = GuestAttestationParameters {
+            protocol_version: "2.0".into(),
+            os_type: "Linux".into(),
+            os_distro: "Test".into(),
+            os_version_major: 0,
+            os_version_minor: 0,
+            os_build: "".into(),
+            tcg_logs: vec![],
+            client_payload: r#"{"nested":{"a":1}}"#.into(),
+            tpm_info: TpmInfo {
+                ak_cert: vec![],
+                ak_pub: vec![],
+                pcr_quote: vec![],
+                pcr_sig: vec![],
+                pcr_set: vec![],
+                pcrs: vec![],
+                enc_key_pub: vec![],
+                enc_key_certify_info: vec![],
+                enc_key_certify_info_sig: vec![],
+            },
+            isolation: IsolationInfo {
+                vm_type: IsolationType::TrustedLaunch,
+                evidence: None,
+            },
+        };
+        let json = params.to_json_string();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let cp = v["ClientPayload"].as_object().unwrap();
+        let nested_b64 = cp["nested"].as_str().unwrap();
+        let decoded = STANDARD.decode(nested_b64).unwrap();
+        let decoded_str = String::from_utf8(decoded).unwrap();
+        let inner: serde_json::Value = serde_json::from_str(&decoded_str).unwrap();
+        assert_eq!(inner["a"], 1);
+    }
+
+    #[test]
+    fn client_payload_whitespace_only_produces_empty_map() {
+        let params = GuestAttestationParameters {
+            protocol_version: "2.0".into(),
+            os_type: "Linux".into(),
+            os_distro: "Test".into(),
+            os_version_major: 0,
+            os_version_minor: 0,
+            os_build: "".into(),
+            tcg_logs: vec![],
+            client_payload: "   \t\n  ".into(),
+            tpm_info: TpmInfo {
+                ak_cert: vec![],
+                ak_pub: vec![],
+                pcr_quote: vec![],
+                pcr_sig: vec![],
+                pcr_set: vec![],
+                pcrs: vec![],
+                enc_key_pub: vec![],
+                enc_key_certify_info: vec![],
+                enc_key_certify_info_sig: vec![],
+            },
+            isolation: IsolationInfo {
+                vm_type: IsolationType::TrustedLaunch,
+                evidence: None,
+            },
+        };
+        let json = params.to_json_string();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(v["ClientPayload"].is_object());
+        assert_eq!(v["ClientPayload"].as_object().unwrap().len(), 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // collect_tcg_logs
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn collect_tcg_logs_linux_returns_bytes_or_empty() {
+        let os = OsInfo {
+            os_type: "Linux".into(),
+            distro: "Test".into(),
+            version_major: 0,
+            version_minor: 0,
+            build: "".into(),
+            pcr_list: vec![],
+        };
+        // On a test machine without TPM this returns empty; on a real CVM it returns data.
+        // Either way it should not panic.
+        let _logs = collect_tcg_logs(&os);
+    }
+
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn collect_tcg_logs_windows_on_linux_returns_empty() {
+        let os = OsInfo {
+            os_type: "Windows".into(),
+            distro: "".into(),
+            version_major: 0,
+            version_minor: 0,
+            build: "".into(),
+            pcr_list: vec![],
+        };
+        // Running on Linux, the Windows path should return empty
+        assert!(collect_tcg_logs(&os).is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // str_as_b64 / as_b64 via GuestAttestationParameters serialization
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn os_type_and_distro_are_base64_encoded() {
+        use base64::engine::general_purpose::STANDARD;
+        let params = GuestAttestationParameters {
+            protocol_version: "2.0".into(),
+            os_type: "Linux".into(),
+            os_distro: "Ubuntu".into(),
+            os_version_major: 22,
+            os_version_minor: 4,
+            os_build: "NotApplication".into(),
+            tcg_logs: vec![0xDE, 0xAD],
+            client_payload: "".into(),
+            tpm_info: TpmInfo {
+                ak_cert: vec![1, 2, 3],
+                ak_pub: vec![4, 5, 6],
+                pcr_quote: vec![],
+                pcr_sig: vec![],
+                pcr_set: vec![],
+                pcrs: vec![],
+                enc_key_pub: vec![],
+                enc_key_certify_info: vec![],
+                enc_key_certify_info_sig: vec![],
+            },
+            isolation: IsolationInfo {
+                vm_type: IsolationType::TrustedLaunch,
+                evidence: None,
+            },
+        };
+        let json = params.to_json_string();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        // OSType is base64(str) encoded
+        let os_type_b64 = v["OSType"].as_str().unwrap();
+        let decoded = STANDARD.decode(os_type_b64).unwrap();
+        assert_eq!(String::from_utf8(decoded).unwrap(), "Linux");
+        // OSDistro is base64(str) encoded
+        let os_distro_b64 = v["OSDistro"].as_str().unwrap();
+        let decoded = STANDARD.decode(os_distro_b64).unwrap();
+        assert_eq!(String::from_utf8(decoded).unwrap(), "Ubuntu");
+        // TcgLogs is base64(bytes) encoded
+        let tcg_b64 = v["TcgLogs"].as_str().unwrap();
+        let decoded = STANDARD.decode(tcg_b64).unwrap();
+        assert_eq!(decoded, vec![0xDE, 0xAD]);
+    }
+
+    // -----------------------------------------------------------------------
+    // build_tee_only_payload_from_evidence
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn build_tee_only_payload_unsupported_type_returns_error() {
+        use crate::client::CvmEvidence;
+        use crate::report::CvmReportType;
+        let evidence = CvmEvidence {
+            report_type: CvmReportType::VbsVmReport,
+            tee_report: vec![],
+            runtime_claims: None,
+            runtime_data: vec![],
+            platform_quote: vec![],
+        };
+        let result = build_tee_only_payload_from_evidence(&evidence, None);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("Unsupported"),
+            "should mention unsupported: {err}"
+        );
+    }
+
+    #[test]
+    fn build_tee_only_payload_tdx_with_platform_quote() {
+        use crate::client::CvmEvidence;
+        use crate::report::CvmReportType;
+        use base64::engine::general_purpose::STANDARD;
+        let td_quote = vec![0xAA; 100];
+        let evidence = CvmEvidence {
+            report_type: CvmReportType::TdxVmReport,
+            tee_report: vec![0xBB; 64],
+            runtime_claims: None,
+            runtime_data: vec![],
+            platform_quote: td_quote.clone(),
+        };
+        let (payload, rtype) = build_tee_only_payload_from_evidence(&evidence, None).unwrap();
+        assert_eq!(rtype, CvmReportType::TdxVmReport);
+        let v: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        // TDX evidence uses "quote" field
+        assert!(v.get("quote").is_some());
+        let quote_b64 = v["quote"].as_str().unwrap();
+        let decoded = STANDARD.decode(quote_b64).unwrap();
+        assert_eq!(decoded, td_quote);
+    }
 }

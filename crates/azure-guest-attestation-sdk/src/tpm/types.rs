@@ -4021,4 +4021,201 @@ mod tests {
             _ => panic!("expected RSASSA signature for NvCertify"),
         }
     }
+
+    // ==================== PcrAlgorithm Tests ====================
+
+    #[test]
+    fn pcr_algorithm_to_alg_id() {
+        assert_eq!(PcrAlgorithm::Sha1.to_alg_id(), ALG_SHA1);
+        assert_eq!(PcrAlgorithm::Sha256.to_alg_id(), ALG_SHA256);
+        assert_eq!(PcrAlgorithm::Sha384.to_alg_id(), 0x000C);
+    }
+
+    #[test]
+    fn pcr_algorithm_digest_len() {
+        assert_eq!(PcrAlgorithm::Sha1.digest_len(), 20);
+        assert_eq!(PcrAlgorithm::Sha256.digest_len(), 32);
+        assert_eq!(PcrAlgorithm::Sha384.digest_len(), 48);
+    }
+
+    #[test]
+    fn pcr_algorithm_from_alg_id() {
+        assert_eq!(
+            PcrAlgorithm::from_alg_id(ALG_SHA1),
+            Some(PcrAlgorithm::Sha1)
+        );
+        assert_eq!(
+            PcrAlgorithm::from_alg_id(ALG_SHA256),
+            Some(PcrAlgorithm::Sha256)
+        );
+        assert_eq!(
+            PcrAlgorithm::from_alg_id(0x000C),
+            Some(PcrAlgorithm::Sha384)
+        );
+        assert_eq!(PcrAlgorithm::from_alg_id(0xFFFF), None);
+    }
+
+    #[test]
+    fn pcr_algorithm_display() {
+        assert_eq!(format!("{}", PcrAlgorithm::Sha1), "sha1");
+        assert_eq!(format!("{}", PcrAlgorithm::Sha256), "sha256");
+        assert_eq!(format!("{}", PcrAlgorithm::Sha384), "sha384");
+    }
+
+    #[test]
+    fn pcr_algorithm_from_str() {
+        assert_eq!("sha1".parse::<PcrAlgorithm>(), Ok(PcrAlgorithm::Sha1));
+        assert_eq!("SHA256".parse::<PcrAlgorithm>(), Ok(PcrAlgorithm::Sha256));
+        assert_eq!("Sha384".parse::<PcrAlgorithm>(), Ok(PcrAlgorithm::Sha384));
+        assert!("md5".parse::<PcrAlgorithm>().is_err());
+        assert!("".parse::<PcrAlgorithm>().is_err());
+    }
+
+    // ==================== TpmaNvBits Tests ====================
+
+    #[test]
+    fn tpma_nv_bits_construction() {
+        let bits = TpmaNvBits::new()
+            .with_nv_ownerwrite(true)
+            .with_nv_authwrite(true)
+            .with_nv_ownerread(true)
+            .with_nv_authread(true);
+        let raw: u32 = bits.into();
+        assert_ne!(raw, 0);
+        assert!(bits.nv_ownerwrite());
+        assert!(bits.nv_authwrite());
+        assert!(bits.nv_ownerread());
+        assert!(bits.nv_authread());
+        assert!(!bits.nv_ppwrite());
+    }
+
+    #[test]
+    fn tpma_nv_bits_extend() {
+        let bits = TpmaNvBits::new().with_nt_extend(true);
+        assert!(bits.nt_extend());
+        assert!(!bits.nt_counter());
+        assert!(!bits.nt_bits());
+    }
+
+    // ==================== Hierarchy Tests ====================
+
+    #[test]
+    fn hierarchy_handles() {
+        assert_eq!(Hierarchy::Owner.handle(), 0x4000_0001);
+        assert_eq!(Hierarchy::Null.handle(), 0x4000_0007);
+        assert_eq!(Hierarchy::Endorsement.handle(), 0x4000_000B);
+    }
+
+    // ==================== TpmtRsaDecryptScheme Tests ====================
+
+    #[test]
+    fn rsa_decrypt_scheme_marshal() {
+        let rsaes = TpmtRsaDecryptScheme::Rsaes;
+        let mut buf = Vec::new();
+        rsaes.marshal(&mut buf);
+        assert_eq!(buf.len(), 2);
+        assert_eq!(u16::from_be_bytes([buf[0], buf[1]]), ALG_RSAES);
+
+        let oaep = TpmtRsaDecryptScheme::Oaep(ALG_SHA256);
+        let mut buf2 = Vec::new();
+        oaep.marshal(&mut buf2);
+        // OAEP: alg_id(2) + hash_alg(2) = 4 bytes
+        assert_eq!(buf2.len(), 4);
+        assert_eq!(u16::from_be_bytes([buf2[0], buf2[1]]), ALG_OAEP);
+        assert_eq!(u16::from_be_bytes([buf2[2], buf2[3]]), ALG_SHA256);
+    }
+
+    // ==================== SymDefObject Tests ====================
+
+    #[test]
+    fn sym_def_object_null_marshal() {
+        let sym = SymDefObject {
+            alg: 0x0010,
+            key_bits: 0,
+            mode: 0,
+        };
+        let mut buf = Vec::new();
+        sym.marshal(&mut buf);
+        // Null: just the algorithm (0x0010) = 2 bytes
+        assert_eq!(buf.len(), 2);
+    }
+
+    // ==================== NvPublic Tests ====================
+
+    #[test]
+    fn nv_public_marshal_correct_size() {
+        let np = NvPublic {
+            nv_index: 0x0140_0001,
+            name_alg: ALG_SHA256,
+            attributes: TPMA_NV_OWNERWRITE | TPMA_NV_OWNERREAD,
+            auth_policy: vec![],
+            data_size: 64,
+        };
+        let mut buf = Vec::new();
+        np.marshal(&mut buf);
+        // size_prefix(2) + nvIndex(4) + nameAlg(2) + attributes(4) + authPolicySize(2) + dataSize(2) = 16
+        assert_eq!(buf.len(), 16);
+        // Verify the size prefix matches inner content length
+        let size_prefix = u16::from_be_bytes([buf[0], buf[1]]) as usize;
+        assert_eq!(size_prefix + 2, buf.len());
+    }
+
+    #[test]
+    fn nv_public_with_auth_policy_marshal() {
+        let policy = vec![0xAA; 32];
+        let np = NvPublic {
+            nv_index: 0x0150_0030,
+            name_alg: ALG_SHA256,
+            attributes: 0,
+            auth_policy: policy.clone(),
+            data_size: 32,
+        };
+        let mut buf = Vec::new();
+        np.marshal(&mut buf);
+        // size_prefix(2) + nvIndex(4) + nameAlg(2) + attributes(4) + authPolicySize(2) + policy(32) + dataSize(2) = 48
+        assert_eq!(buf.len(), 48);
+    }
+
+    #[test]
+    fn nv_public_new_extend_index() {
+        let np = NvPublic::new_extend_index(0x0150_0030, 32);
+        assert_eq!(np.nv_index, 0x0150_0030);
+        assert_eq!(np.data_size, 32);
+        assert_eq!(np.name_alg, ALG_SHA256);
+        // nt_extend bit should be set
+        let bits = TpmaNvBits::from(np.attributes);
+        assert!(bits.nt_extend());
+    }
+
+    #[test]
+    fn nv_public_new_ordinary_index() {
+        let np = NvPublic::new_ordinary_index(0x0140_0001, 64);
+        assert_eq!(np.nv_index, 0x0140_0001);
+        assert_eq!(np.data_size, 64);
+        assert_eq!(np.name_alg, ALG_SHA256);
+    }
+
+    // ==================== Tpm2bBytes Tests ====================
+
+    #[test]
+    fn tpm2b_bytes_marshal_unmarshal() {
+        let b = Tpm2bBytes(vec![0x01, 0x02, 0x03]);
+        let mut buf = Vec::new();
+        b.marshal(&mut buf);
+        assert_eq!(buf.len(), 5); // 2 (size) + 3 (data)
+        let mut cur = 0usize;
+        let parsed = Tpm2bBytes::unmarshal(&buf, &mut cur).expect("unmarshal bytes");
+        assert_eq!(parsed.0, vec![0x01, 0x02, 0x03]);
+    }
+
+    #[test]
+    fn tpm2b_bytes_empty() {
+        let b = Tpm2bBytes(vec![]);
+        let mut buf = Vec::new();
+        b.marshal(&mut buf);
+        assert_eq!(buf.len(), 2);
+        let mut cur = 0usize;
+        let parsed = Tpm2bBytes::unmarshal(&buf, &mut cur).expect("unmarshal empty bytes");
+        assert!(parsed.0.is_empty());
+    }
 }

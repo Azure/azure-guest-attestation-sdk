@@ -485,6 +485,27 @@ mod tests {
     }
 
     #[test]
+    fn pad_user_data_exact_64() {
+        let input = [0xAB; 64];
+        let out = pad_user_data(&input);
+        assert_eq!(out, input);
+    }
+
+    #[test]
+    fn pad_user_data_over_64_truncates() {
+        let input = [0xFF; 100];
+        let out = pad_user_data(&input);
+        assert_eq!(&out[..], &input[..64]);
+    }
+
+    #[test]
+    fn pad_user_data_single_byte() {
+        let out = pad_user_data(&[0x42]);
+        assert_eq!(out[0], 0x42);
+        assert!(out[1..].iter().all(|&b| b == 0));
+    }
+
+    #[test]
     fn vtpm_quote_signature_verifies() {
         #[cfg(feature = "vtpm-tests")]
         {
