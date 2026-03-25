@@ -57,11 +57,10 @@ impl ImdsClient {
 
     /// Fetch a TDX TD Quote from IMDS for the given TDX report bytes.
     pub fn get_td_quote(&self, report: &[u8]) -> io::Result<Vec<u8>> {
-        use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
-        use base64::Engine;
-        const TDQUOTE_ENDPOINT: &str = "http://169.254.169.254/acc/tdquote";
-
-        // Trim to canonical TDX report size expected by IMDS
+        // Trim to canonical TDX report size expected by IMDS.
+        // Validation is in this thin wrapper so its stack frame stays small;
+        // the heavy HTTP / base64 work lives in `fetch_td_quote_http` whose
+        // frame is only allocated when we actually need the network call.
         let needed = crate::report::TDX_VM_REPORT_SIZE;
         if report.len() < needed {
             return Err(io::Error::new(
@@ -73,7 +72,21 @@ impl ImdsClient {
                 ),
             ));
         }
-        let rep = &report[..needed];
+        self.fetch_td_quote_http(&report[..needed])
+    }
+
+    /// Post the (already-validated) TDX report to IMDS and return the quote.
+    ///
+    /// Separated from [`get_td_quote`] so that the large stack frame for
+    /// reqwest responses, base64 buffers, and JSON values is only allocated
+    /// when the caller actually reaches the network path.  With `opt-level = 0`
+    /// (required by injectorpp in the test profile) the compiler does not
+    /// shrink stack frames, and keeping everything in a single function caused
+    /// stack overflows on Windows test threads.
+    fn fetch_td_quote_http(&self, rep: &[u8]) -> io::Result<Vec<u8>> {
+        use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
+        use base64::Engine;
+        const TDQUOTE_ENDPOINT: &str = "http://169.254.169.254/acc/tdquote";
 
         // First attempt: standard base64 with padding
         let std_b64 = STANDARD.encode(rep);
