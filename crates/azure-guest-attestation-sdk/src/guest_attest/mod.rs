@@ -637,34 +637,43 @@ pub fn parse_token(
         pcrs,
         &encrypted_inner_key,
     )?;
-    if !(inner_key.len() == 16 || inner_key.len() == 24 || inner_key.len() == 32) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("unexpected inner key length {}", inner_key.len()),
-        ));
-    }
-
-    use aes_gcm::{aead::Aead, aead::KeyInit, Aes256Gcm, Nonce};
-    let mut key_bytes = [0u8; 32];
-    for (i, b) in inner_key.iter().enumerate().take(32) {
-        key_bytes[i] = *b;
-    }
-    let cipher = Aes256Gcm::new_from_slice(&key_bytes)
-        .map_err(|e| io::Error::other(format!("aes key init: {e}")))?;
+    use aes_gcm::{aead::Aead, aead::KeyInit, Aes128Gcm, Aes256Gcm, Nonce};
     let mut ct_and_tag = Vec::with_capacity(jwt_ct.len() + auth_tag.len());
     ct_and_tag.extend_from_slice(&jwt_ct);
     ct_and_tag.extend_from_slice(&auth_tag);
     let nonce = Nonce::from_slice(&iv);
     let aad = b"Transport Key";
-    let plaintext = cipher
-        .decrypt(
-            nonce,
-            aes_gcm::aead::Payload {
-                msg: &ct_and_tag,
-                aad,
-            },
-        )
-        .map_err(|e| io::Error::other(format!("aes-gcm decrypt: {e}")))?;
+    let plaintext = match inner_key.len() {
+        16 => {
+            let cipher = Aes128Gcm::new_from_slice(&inner_key)
+                .map_err(|e| io::Error::other(format!("aes-128 key init: {e}")))?;
+            cipher.decrypt(
+                nonce,
+                aes_gcm::aead::Payload {
+                    msg: &ct_and_tag,
+                    aad,
+                },
+            )
+        }
+        32 => {
+            let cipher = Aes256Gcm::new_from_slice(&inner_key)
+                .map_err(|e| io::Error::other(format!("aes-256 key init: {e}")))?;
+            cipher.decrypt(
+                nonce,
+                aes_gcm::aead::Payload {
+                    msg: &ct_and_tag,
+                    aad,
+                },
+            )
+        }
+        other => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("unsupported AES key length: {other} (expected 16 or 32)"),
+            ));
+        }
+    }
+    .map_err(|e| io::Error::other(format!("aes-gcm decrypt: {e}")))?;
     let jwt_str = String::from_utf8(plaintext)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("jwt utf8: {e}")))?;
     Ok(Some(jwt_str))
