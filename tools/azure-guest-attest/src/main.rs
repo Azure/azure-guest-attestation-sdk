@@ -924,7 +924,7 @@ fn main() -> anyhow::Result<()> {
             } else {
                 writeln!(writer, "Replayed PCRs ({}):", alg)?;
                 for (idx, digest) in &replayed {
-                    if filter_set.as_ref().map_or(true, |set| set.contains(idx)) {
+                    if filter_set.as_ref().is_none_or(|set| set.contains(idx)) {
                         writeln!(writer, "  PCR[{idx}]: {}", hex::encode(digest))?;
                     }
                 }
@@ -1278,14 +1278,14 @@ fn parse_user_data_variable(s: &str) -> anyhow::Result<Vec<u8>> {
 }
 
 fn is_probable_hex(s: &str) -> bool {
-    if s.len() % 2 != 0 || s.is_empty() {
+    if !s.len().is_multiple_of(2) || s.is_empty() {
         return false;
     }
     s.chars().all(|c| c.is_ascii_hexdigit()) && (s.len() / 2) <= 64
 }
 
 fn hex_to_bytes(s: &str) -> anyhow::Result<Vec<u8>> {
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return Err(anyhow::anyhow!("hex data must have even length"));
     }
     if (s.len() / 2) > 64 {

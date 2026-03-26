@@ -6,7 +6,7 @@ Thank you for your interest in contributing to the Azure Guest Attestation SDK!
 
 ### Prerequisites
 
-- **Rust**: Install via [rustup](https://rustup.rs/) (stable toolchain, MSRV 1.76)
+- **Rust**: Install via [rustup](https://rustup.rs/) (stable toolchain, MSRV 1.94)
 - **cargo-nextest** (recommended): `cargo install cargo-nextest`
 - **Perl**: Required for vTPM tests (vendored OpenSSL build) –
   [Strawberry Perl](https://strawberryperl.com/) on Windows

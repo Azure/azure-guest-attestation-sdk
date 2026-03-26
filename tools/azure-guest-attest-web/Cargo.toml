@@ -23,9 +23,8 @@ hex.workspace = true
 # CLI
 clap.workspace = true
 
-# Web framework — pin upper bound for MSRV 1.76 compat
-axum = { version = ">=0.7,<=0.7.9", features = ["json"] }
-tokio = { version = ">=1.36,<=1.44", features = ["rt-multi-thread", "macros", "net"] }
+axum = { version = "0.7", features = ["json"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
 
 # TLS support for HTTPS mode
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

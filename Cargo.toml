@@ -24,7 +24,7 @@ edition = "2021"
 license = "MIT"
 repository = "https://github.com/Azure/azure-guest-attestation-sdk"
 authors = ["Microsoft Azure"]
-rust-version = "1.76"
+rust-version = "1.94"
 
 # Shared dependencies - members can use `workspace = true`
 [workspace.dependencies]
@@ -40,8 +40,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 
 # CLI dependencies
-# Pin to 4.5.x <=4.5.37 to keep clap_lex on 0.7.x (MSRV 1.76 compat)
-clap = { version = ">=4.5,<=4.5.37", features = ["derive"] }
+clap = { version = "4", features = ["derive"] }
 anyhow = "1.0"
 
 # Crypto

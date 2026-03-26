@@ -24,7 +24,7 @@ A clear and concise description of what you expected to happen.
 ## Environment
 
 - **OS**: [e.g. Ubuntu 24.04, Windows Server 2025]
-- **Rust version**: [e.g. 1.76.0]
+- **Rust version**: [e.g. 1.94.0]
 - **SDK version**: [e.g. 0.1.0]
 - **VM type**: [e.g. SEV-SNP, TDX, TrustedLaunch]
 

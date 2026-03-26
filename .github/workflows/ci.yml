@@ -93,11 +93,11 @@ jobs:
   # MSRV check
   # --------------------------------------------------------------------------
   msrv:
-    name: MSRV (Rust 1.76)
+    name: MSRV (Rust 1.94)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.76
+      - uses: dtolnay/rust-toolchain@1.94
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace
 
