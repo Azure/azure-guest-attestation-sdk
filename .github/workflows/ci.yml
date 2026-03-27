@@ -15,7 +15,31 @@ env:
 
 jobs:
   # --------------------------------------------------------------------------
-  # Format check (fast, single job)
+  # Detect which files changed so we can skip expensive jobs on doc-only PRs.
+  # Uses dorny/paths-filter — the de-facto standard for path-based filtering.
+  # Skipped jobs still satisfy GitHub required-status-check rules.
+  # --------------------------------------------------------------------------
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            code:
+              - 'crates/**'
+              - 'tools/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - '.github/workflows/ci.yml'
+
+  # --------------------------------------------------------------------------
+  # Format check (fast, always runs)
   # --------------------------------------------------------------------------
   fmt:
     name: Rustfmt
@@ -28,10 +52,12 @@ jobs:
       - run: cargo fmt --all -- --check
 
   # --------------------------------------------------------------------------
-  # Clippy lint (per-platform)
+  # Clippy lint (per-platform, skipped on doc-only changes)
   # --------------------------------------------------------------------------
   clippy:
     name: Clippy (${{ matrix.os }})
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -46,10 +72,12 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
   # --------------------------------------------------------------------------
-  # Build + unit tests (no vTPM)
+  # Build + unit tests (no vTPM, skipped on doc-only changes)
   # --------------------------------------------------------------------------
   test:
     name: Test (${{ matrix.os }})
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -63,10 +91,12 @@ jobs:
       - run: cargo test --workspace
 
   # --------------------------------------------------------------------------
-  # vTPM integration tests (needs vendored OpenSSL → needs Perl)
+  # vTPM integration tests (skipped on doc-only changes)
   # --------------------------------------------------------------------------
   vtpm-tests:
     name: vTPM tests (${{ matrix.os }})
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -90,10 +120,12 @@ jobs:
         run: cargo nextest run -p azure-guest-attestation-sdk --features vtpm-tests
 
   # --------------------------------------------------------------------------
-  # MSRV check
+  # MSRV check (skipped on doc-only changes)
   # --------------------------------------------------------------------------
   msrv:
     name: MSRV (Rust 1.94)
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -102,10 +134,12 @@ jobs:
       - run: cargo check --workspace
 
   # --------------------------------------------------------------------------
-  # Documentation build
+  # Documentation build (skipped on doc-only changes — runs cargo doc)
   # --------------------------------------------------------------------------
   docs:
     name: Docs
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     env:
       RUSTDOCFLAGS: -Dwarnings
@@ -116,11 +150,12 @@ jobs:
       - run: cargo doc --workspace --no-deps
 
   # --------------------------------------------------------------------------
-  # Code coverage (unit tests + vTPM tests, Linux only)
-  # Fails the PR if line coverage drops below the threshold.
+  # Code coverage (skipped on doc-only changes)
   # --------------------------------------------------------------------------
   coverage:
     name: Code Coverage
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
