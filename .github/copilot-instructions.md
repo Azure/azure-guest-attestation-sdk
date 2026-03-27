@@ -21,6 +21,13 @@ state.  Read this file in its entirety before making any changes.
 Every commit **must** pass all of the following before push.  These are the
 **exact** commands CI runs.  Do not invent variations.
 
+> **Path filtering**: CI uses `dorny/paths-filter` to skip expensive jobs
+> (clippy, test, vtpm-tests, msrv, docs, coverage) on PRs that only touch
+> non-code files (markdown, scripts, etc.).  Push to `main` always runs
+> everything.  The `fmt` job always runs.  Code paths that trigger the full
+> suite: `crates/**`, `tools/**`, `Cargo.toml`, `Cargo.lock`,
+> `rust-toolchain.toml`, `.github/workflows/ci.yml`.
+
 ### 2.1 Format
 
 ```bash
