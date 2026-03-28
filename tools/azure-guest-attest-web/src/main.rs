@@ -1081,20 +1081,22 @@ fn load_tls_config(
     cert_path: &std::path::Path,
     key_path: &std::path::Path,
 ) -> std::io::Result<Arc<rustls::ServerConfig>> {
-    use std::io::BufReader;
+    use rustls::pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
 
-    let cert_file = std::fs::File::open(cert_path).map_err(|e| {
-        std::io::Error::new(
-            e.kind(),
-            format!("opening cert {}: {e}", cert_path.display()),
-        )
-    })?;
-    let key_file = std::fs::File::open(key_path).map_err(|e| {
-        std::io::Error::new(e.kind(), format!("opening key {}: {e}", key_path.display()))
-    })?;
-
-    let certs: Vec<_> =
-        rustls_pemfile::certs(&mut BufReader::new(cert_file)).collect::<Result<_, _>>()?;
+    let certs: Vec<CertificateDer<'static>> = CertificateDer::pem_file_iter(cert_path)
+        .map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("opening cert {}: {e}", cert_path.display()),
+            )
+        })?
+        .collect::<Result<_, _>>()
+        .map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("reading cert {}: {e}", cert_path.display()),
+            )
+        })?;
     if certs.is_empty() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -1102,10 +1104,10 @@ fn load_tls_config(
         ));
     }
 
-    let key = rustls_pemfile::private_key(&mut BufReader::new(key_file))?.ok_or_else(|| {
+    let key = PrivateKeyDer::from_pem_file(key_path).map_err(|e| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            "no private key found in key file",
+            format!("reading key {}: {e}", key_path.display()),
         )
     })?;
 
@@ -1124,18 +1126,26 @@ fn build_tls_config_from_pem(
     cert_pem: &str,
     key_pem: &str,
 ) -> std::io::Result<Arc<rustls::ServerConfig>> {
-    let certs: Vec<_> =
-        rustls_pemfile::certs(&mut cert_pem.as_bytes()).collect::<Result<_, _>>()?;
+    use rustls::pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
+
+    let certs: Vec<CertificateDer<'static>> = CertificateDer::pem_slice_iter(cert_pem.as_bytes())
+        .collect::<Result<_, _>>()
+        .map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("parsing cert PEM: {e}"),
+            )
+        })?;
     if certs.is_empty() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             "no certificates found in PEM data",
         ));
     }
-    let key = rustls_pemfile::private_key(&mut key_pem.as_bytes())?.ok_or_else(|| {
+    let key = PrivateKeyDer::from_pem_slice(key_pem.as_bytes()).map_err(|e| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            "no private key found in PEM data",
+            format!("parsing key PEM: {e}"),
         )
     })?;
 
