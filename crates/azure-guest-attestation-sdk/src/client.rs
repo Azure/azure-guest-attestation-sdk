@@ -25,8 +25,7 @@
 //! println!("Token: {}", result.token.unwrap_or_default());
 //! ```
 
-use std::io;
-
+use crate::error::SdkError;
 use crate::guest_attest::{
     self, GuestAttestationParameters, IsolationEvidence, IsolationInfo, IsolationType, MaaProvider,
     OsInfo, PcrEntry, TeeProof, TpmInfo,
@@ -217,7 +216,7 @@ impl AttestationClient {
     ///
     /// On Linux this tries `/dev/tpmrm0` then `/dev/tpm0`.
     /// On Windows this uses TBS (TPM Base Services).
-    pub fn new() -> io::Result<Self> {
+    pub fn new() -> crate::error::Result<Self> {
         let tpm = Tpm::open()?;
         Ok(Self { tpm })
     }
@@ -249,16 +248,16 @@ impl AttestationClient {
     pub fn get_cvm_evidence(
         &self,
         options: Option<&CvmEvidenceOptions>,
-    ) -> io::Result<CvmEvidence> {
+    ) -> crate::error::Result<CvmEvidence> {
         let opts = options.cloned().unwrap_or_default();
 
         // Validate user data length
         if let Some(ref ud) = opts.user_data {
             if ud.len() > 64 {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("user_data length {} exceeds 64 bytes", ud.len()),
-                ));
+                return Err(SdkError::Parse(format!(
+                    "user_data length {} exceeds 64 bytes",
+                    ud.len()
+                )));
             }
         }
 
@@ -312,7 +311,7 @@ impl AttestationClient {
     pub fn get_device_evidence(
         &self,
         options: Option<&DeviceEvidenceOptions>,
-    ) -> io::Result<DeviceEvidence> {
+    ) -> crate::error::Result<DeviceEvidence> {
         let opts = options.cloned().unwrap_or_default();
         match opts.device_type {
             DeviceType::Tpm => self.get_tpm_evidence(opts.pcr_selection.as_deref()),
@@ -320,7 +319,10 @@ impl AttestationClient {
     }
 
     /// Internal: collect evidence from the platform TPM.
-    fn get_tpm_evidence(&self, pcr_selection: Option<&[u32]>) -> io::Result<DeviceEvidence> {
+    fn get_tpm_evidence(
+        &self,
+        pcr_selection: Option<&[u32]>,
+    ) -> crate::error::Result<DeviceEvidence> {
         let pcrs = match pcr_selection {
             Some(p) => p.to_vec(),
             None => OsInfo::detect()?.pcr_list,
@@ -382,7 +384,7 @@ impl AttestationClient {
     ///
     /// Currently supports [`EndorsementKind::Vcek`] which fetches the AMD
     /// SEV-SNP VCEK certificate chain from Azure THIM / IMDS.
-    pub fn get_endorsement(&self, kind: EndorsementKind) -> io::Result<Endorsement> {
+    pub fn get_endorsement(&self, kind: EndorsementKind) -> crate::error::Result<Endorsement> {
         match kind {
             EndorsementKind::Vcek => {
                 let imds = guest_attest::ImdsClient::new();
@@ -408,7 +410,7 @@ impl AttestationClient {
         cvm_evidence: Option<&CvmEvidence>,
         endorsement: Option<&Endorsement>,
         options: Option<&AttestOptions>,
-    ) -> io::Result<AttestationReport> {
+    ) -> crate::error::Result<AttestationReport> {
         let os = OsInfo::detect()?;
         let tcg_logs = guest_attest::collect_tcg_logs(&os);
         let client_payload = options
@@ -468,7 +470,7 @@ impl AttestationClient {
         &self,
         provider: Provider,
         options: Option<&AttestOptions>,
-    ) -> io::Result<AttestResult> {
+    ) -> crate::error::Result<AttestResult> {
         let mut timer = guest_attest::StageTimer::new();
 
         // 1. Resolve PCR selection (explicit > OS default)
@@ -519,7 +521,7 @@ impl AttestationClient {
     /// Collects CVM evidence, builds the TEE-only payload (SNP report +
     /// VCEK chain, or TD Quote), and submits directly to a MAA platform
     /// endpoint.
-    pub fn attest_platform(&self, provider: Provider) -> io::Result<AttestResult> {
+    pub fn attest_platform(&self, provider: Provider) -> crate::error::Result<AttestResult> {
         // Collect CVM evidence with platform quote support
         let opts = CvmEvidenceOptions {
             fetch_platform_quote: true,
@@ -562,11 +564,15 @@ impl AttestationClient {
     /// The `token_b64url` should be the base64url-encoded token returned by
     /// the provider. The `pcrs` should come from the [`AttestResult`] of the
     /// corresponding [`attest_guest`](Self::attest_guest) call.
-    pub fn decrypt_token(&self, pcrs: &[u32], token_b64url: &str) -> io::Result<Option<String>> {
+    pub fn decrypt_token(
+        &self,
+        pcrs: &[u32],
+        token_b64url: &str,
+    ) -> crate::error::Result<Option<String>> {
         let handle = self.recreate_ephemeral_key(pcrs)?;
         let result = guest_attest::parse_token(&self.tpm, handle, pcrs, token_b64url);
         let _ = self.tpm.flush_context(handle);
-        result
+        Ok(result?)
     }
 
     /// Decrypt raw ciphertext using a TPM ephemeral RSA key derived from the
@@ -584,22 +590,19 @@ impl AttestationClient {
         &self,
         pcrs: &[u32],
         ciphertext: &[u8],
-    ) -> io::Result<Vec<u8>> {
+    ) -> crate::error::Result<Vec<u8>> {
         let handle = self.recreate_ephemeral_key(pcrs)?;
         let result = attestation::decrypt_with_ephemeral_key(&self.tpm, handle, pcrs, ciphertext);
         let _ = self.tpm.flush_context(handle);
-        result
+        Ok(result?)
     }
 
     /// Recreate the deterministic ephemeral RSA primary key from PCRs and
     /// return its transient handle.  Caller **must** flush the handle when done.
-    fn recreate_ephemeral_key(&self, pcrs: &[u32]) -> io::Result<u32> {
+    fn recreate_ephemeral_key(&self, pcrs: &[u32]) -> crate::error::Result<u32> {
         let (_, handle_bytes, _, _) = attestation::get_ephemeral_key(&self.tpm, pcrs)?;
         if handle_bytes.len() < 4 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "ephemeral key handle too short",
-            ));
+            return Err(SdkError::Parse("ephemeral key handle too short".into()));
         }
         Ok(u32::from_be_bytes([
             handle_bytes[0],
@@ -629,7 +632,7 @@ fn make_provider(provider: &Provider) -> Box<dyn guest_attest::AttestationProvid
 fn build_isolation_info(
     evidence: Option<&CvmEvidence>,
     endorsement: Option<&Endorsement>,
-) -> io::Result<IsolationInfo> {
+) -> crate::error::Result<IsolationInfo> {
     let evidence = match evidence {
         Some(ev) => ev,
         None => {
@@ -676,7 +679,7 @@ fn build_isolation_info(
                 }),
             })
         }
-        rtype => Err(io::Error::other(format!(
+        rtype => Err(SdkError::Other(format!(
             "Unsupported report type for attestation: {rtype:?}"
         ))),
     }
@@ -685,6 +688,7 @@ fn build_isolation_info(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io;
 
     #[test]
     fn provider_maa_shorthand() {
