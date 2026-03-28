@@ -4,12 +4,13 @@
 
 The Azure Guest Attestation SDK is a Rust library for guest attestation on Azure. It supports **Confidential VMs** (Intel TDX, AMD SEV-SNP, VBS) and **TrustedLaunch** VMs.
 
-The SDK is organized as a Cargo workspace with two members:
+The SDK is organized as a Cargo workspace with three members:
 
 | Crate | Purpose |
-|-------|---------|
+|-------|--------|
 | `azure-guest-attestation-sdk` | Core library — TPM commands, TEE report parsing, attestation workflows |
 | `azure-guest-attest` | CLI tool — exercises the SDK for testing and diagnostics |
+| `azure-guest-attest-web` | Web UI — browser-based interactive attestation tool (axum + HTML/JS) |
 
 ## Layered API
 
