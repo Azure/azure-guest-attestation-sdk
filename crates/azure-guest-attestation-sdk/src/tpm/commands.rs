@@ -40,6 +40,13 @@ use crate::tpm::types::command_prelude::*;
 use crate::tpm::types::PcrAlgorithm;
 use std::io;
 
+/// TPM2_SE_POLICY — starts a policy session that authorizes actions
+/// when its internal policy digest matches the object's authPolicy.
+const TPM_SE_POLICY: u8 = 0x01;
+/// TPM2_SE_TRIAL — starts a trial session used only to compute
+/// a policy digest without actually authorizing anything.
+const TPM_SE_TRIAL: u8 = 0x03;
+
 /// Result of a TPM2_CreatePrimary command.
 ///
 /// Contains the transient handle for the created key and its public area.
@@ -668,7 +675,7 @@ impl<T: RawTpm> TpmCommandExt for T {
             self.transmit_raw(&pw_cmd)?
         } else {
             // Runtime policy session must be TPM_SE.Policy (0x01) to authorize RSA_Decrypt.
-            let session_handle = self.start_auth_session(0x01, TpmAlgId::Sha256.into())?;
+            let session_handle = self.start_auth_session(TPM_SE_POLICY, TpmAlgId::Sha256.into())?;
 
             // Helper closure: flush the session best-effort regardless of outcome.
             let result = (|| {
@@ -706,7 +713,7 @@ impl<T: RawTpm> TpmCommandExt for T {
     }
 
     fn compute_pcr_policy_digest(&self, pcrs: &[u32]) -> io::Result<Vec<u8>> {
-        let session_handle = self.start_auth_session(0x03, TpmAlgId::Sha256.into())?;
+        let session_handle = self.start_auth_session(TPM_SE_TRIAL, TpmAlgId::Sha256.into())?;
 
         // Run all session operations, then always flush the trial session.
         let result = (|| {

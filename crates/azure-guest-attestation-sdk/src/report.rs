@@ -185,16 +185,17 @@ impl CvmAttestationReport {
                 "buffer shorter than report",
             ));
         }
-        let mut report: CvmAttestationReport = unsafe { core::mem::zeroed() };
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                full.as_ptr(),
-                &mut report as *mut _ as *mut u8,
-                size_of::<CvmAttestationReport>(),
-            );
-        }
+        // Safety: CvmAttestationReport is repr(C) with no padding invariants
+        // beyond alignment, and we have verified the buffer is large enough.
+        // read_unaligned handles any alignment.
+        let report: CvmAttestationReport =
+            unsafe { core::ptr::read_unaligned(full.as_ptr() as *const CvmAttestationReport) };
         let start = size_of::<CvmAttestationReport>();
-        let end = start + report.runtime_claims_header.variable_data_size as usize;
+        let end = start
+            .checked_add(report.runtime_claims_header.variable_data_size as usize)
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "variable_data_size overflow")
+            })?;
         if full.len() < end {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,

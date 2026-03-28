@@ -310,25 +310,31 @@ fn main() -> anyhow::Result<()> {
                 if expected > 0 && expected <= rep.tee_report.len() {
                     match rtype {
                         CvmReportType::SnpVmReport => {
-                            #[allow(clippy::cast_ptr_alignment)]
-                            let r: &azure_guest_attestation_sdk::tee_report::snp::SnpReport = unsafe { &*(rep.tee_report.as_ptr() as *const _) };
-                            let pretty_full =
-                                azure_guest_attestation_sdk::tee_report::pretty_snp(r);
-                            writeln!(writer, "{pretty_full}")?;
+                            if let Ok(r) =
+                                azure_guest_attestation_sdk::parse::snp_report(&rep.tee_report)
+                            {
+                                let pretty_full =
+                                    azure_guest_attestation_sdk::parse::snp_report_pretty(&r);
+                                writeln!(writer, "{pretty_full}")?;
+                            }
                         }
                         CvmReportType::TdxVmReport => {
-                            #[allow(clippy::cast_ptr_alignment)]
-                            let r: &azure_guest_attestation_sdk::tee_report::tdx::TdReport = unsafe { &*(rep.tee_report.as_ptr() as *const _) };
-                            let pretty_full =
-                                azure_guest_attestation_sdk::tee_report::pretty_tdx(r);
-                            writeln!(writer, "{pretty_full}")?;
+                            if let Ok(r) =
+                                azure_guest_attestation_sdk::parse::tdx_report(&rep.tee_report)
+                            {
+                                let pretty_full =
+                                    azure_guest_attestation_sdk::parse::tdx_report_pretty(&r);
+                                writeln!(writer, "{pretty_full}")?;
+                            }
                         }
                         CvmReportType::VbsVmReport => {
-                            #[allow(clippy::cast_ptr_alignment)]
-                            let r: &azure_guest_attestation_sdk::tee_report::vbs::VbsReport = unsafe { &*(rep.tee_report.as_ptr() as *const _) };
-                            let pretty_full =
-                                azure_guest_attestation_sdk::tee_report::pretty_vbs(r);
-                            writeln!(writer, "{pretty_full}")?;
+                            if let Ok(r) =
+                                azure_guest_attestation_sdk::parse::vbs_report(&rep.tee_report)
+                            {
+                                let pretty_full =
+                                    azure_guest_attestation_sdk::parse::vbs_report_pretty(&r);
+                                writeln!(writer, "{pretty_full}")?;
+                            }
                         }
                         _ => {}
                     }
@@ -563,12 +569,9 @@ fn main() -> anyhow::Result<()> {
             match rtype {
                 CvmReportType::SnpVmReport => {
                     if pretty {
-                        if tee_bytes.len()
-                            >= azure_guest_attestation_sdk::report::SNP_VM_REPORT_SIZE
+                        if let Ok(rep) = azure_guest_attestation_sdk::parse::snp_report(&tee_bytes)
                         {
-                            #[allow(clippy::cast_ptr_alignment)]
-                            let rep: &azure_guest_attestation_sdk::tee_report::snp::SnpReport = unsafe { &*(tee_bytes.as_ptr() as *const _) };
-                            let full = azure_guest_attestation_sdk::tee_report::pretty_snp(rep);
+                            let full = azure_guest_attestation_sdk::parse::snp_report_pretty(&rep);
                             writeln!(writer, "{full}")?;
                         } else {
                             writeln!(writer, "(truncated SNP report: {} bytes)", tee_bytes.len())?;
@@ -579,12 +582,9 @@ fn main() -> anyhow::Result<()> {
                 }
                 CvmReportType::TdxVmReport => {
                     if pretty {
-                        if tee_bytes.len()
-                            >= azure_guest_attestation_sdk::report::TDX_VM_REPORT_SIZE
+                        if let Ok(rep) = azure_guest_attestation_sdk::parse::tdx_report(&tee_bytes)
                         {
-                            #[allow(clippy::cast_ptr_alignment)]
-                            let rep: &azure_guest_attestation_sdk::tee_report::tdx::TdReport = unsafe { &*(tee_bytes.as_ptr() as *const _) };
-                            let full = azure_guest_attestation_sdk::tee_report::pretty_tdx(rep);
+                            let full = azure_guest_attestation_sdk::parse::tdx_report_pretty(&rep);
                             writeln!(writer, "{full}")?;
                         } else {
                             writeln!(writer, "(truncated TDX report: {} bytes)", tee_bytes.len())?;
@@ -595,12 +595,9 @@ fn main() -> anyhow::Result<()> {
                 }
                 CvmReportType::VbsVmReport => {
                     if pretty {
-                        if tee_bytes.len()
-                            >= azure_guest_attestation_sdk::report::VBS_VM_REPORT_SIZE
+                        if let Ok(rep) = azure_guest_attestation_sdk::parse::vbs_report(&tee_bytes)
                         {
-                            #[allow(clippy::cast_ptr_alignment)]
-                            let rep: &azure_guest_attestation_sdk::tee_report::vbs::VbsReport = unsafe { &*(tee_bytes.as_ptr() as *const _) };
-                            let full = azure_guest_attestation_sdk::tee_report::pretty_vbs(rep);
+                            let full = azure_guest_attestation_sdk::parse::vbs_report_pretty(&rep);
                             writeln!(writer, "{full}")?;
                         } else {
                             writeln!(writer, "(truncated VBS report: {} bytes)", tee_bytes.len())?;
@@ -694,44 +691,37 @@ fn main() -> anyhow::Result<()> {
             let rtype = parsed.runtime_claims_header.report_type;
             match rtype {
                 CvmReportType::SnpVmReport => {
-                    // Attempt IMDS VCEK chain fetch if feature enabled; else
-                    if let Ok(client) = std::panic::catch_unwind(
-                        azure_guest_attestation_sdk::guest_attest::ImdsClient::new,
-                    ) {
-                        match client.get_vcek_chain() {
-                            Ok(bytes) => {
-                                if base64 {
-                                    writeln!(
-                                        writer,
-                                        "{}",
-                                        base64::engine::general_purpose::STANDARD.encode(&bytes)
-                                    )?;
-                                } else {
-                                    writeln!(writer, "{}", hex::encode(&bytes))?;
-                                }
+                    let client = azure_guest_attestation_sdk::guest_attest::ImdsClient::new();
+                    match client.get_vcek_chain() {
+                        Ok(bytes) => {
+                            if base64 {
+                                writeln!(
+                                    writer,
+                                    "{}",
+                                    base64::engine::general_purpose::STANDARD.encode(&bytes)
+                                )?;
+                            } else {
+                                writeln!(writer, "{}", hex::encode(&bytes))?;
                             }
-                            Err(e) => writeln!(writer, "(failed to fetch VCEK chain: {e})")?,
                         }
+                        Err(e) => writeln!(writer, "(failed to fetch VCEK chain: {e})")?,
                     }
                 }
                 CvmReportType::TdxVmReport => {
-                    if let Ok(client) = std::panic::catch_unwind(
-                        azure_guest_attestation_sdk::guest_attest::ImdsClient::new,
-                    ) {
-                        match client.get_td_quote(&parsed.tee_report) {
-                            Ok(bytes) => {
-                                if base64 {
-                                    writeln!(
-                                        writer,
-                                        "{}",
-                                        base64::engine::general_purpose::STANDARD.encode(&bytes)
-                                    )?;
-                                } else {
-                                    writeln!(writer, "{}", hex::encode(&bytes))?;
-                                }
+                    let client = azure_guest_attestation_sdk::guest_attest::ImdsClient::new();
+                    match client.get_td_quote(&parsed.tee_report) {
+                        Ok(bytes) => {
+                            if base64 {
+                                writeln!(
+                                    writer,
+                                    "{}",
+                                    base64::engine::general_purpose::STANDARD.encode(&bytes)
+                                )?;
+                            } else {
+                                writeln!(writer, "{}", hex::encode(&bytes))?;
                             }
-                            Err(e) => writeln!(writer, "(failed to fetch TD quote: {e})")?,
                         }
+                        Err(e) => writeln!(writer, "(failed to fetch TD quote: {e})")?,
                     }
                 }
                 _ => writeln!(
@@ -1197,14 +1187,7 @@ fn fetch_platform_td_quote() -> anyhow::Result<Option<Vec<u8>>> {
         return Ok(None);
     }
 
-    let client = match std::panic::catch_unwind(
-        azure_guest_attestation_sdk::guest_attest::ImdsClient::new,
-    ) {
-        Ok(c) => c,
-        Err(_) => {
-            return Err(anyhow::anyhow!("IMDS client unavailable on this platform"));
-        }
-    };
+    let client = azure_guest_attestation_sdk::guest_attest::ImdsClient::new();
 
     match client.get_td_quote(&report.tee_report) {
         Ok(bytes) => Ok(Some(bytes)),

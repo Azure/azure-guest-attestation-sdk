@@ -60,7 +60,9 @@ pub fn create_and_persist_ecc_signing_key(tpm: &Tpm) -> io::Result<Vec<u8>> {
     tpm.evict_control(ECC_SIGNING_KEY_PERSISTENT_HANDLE, created.handle)?;
 
     // Flush the transient handle
-    let _ = tpm.flush_context(created.handle);
+    if let Err(e) = tpm.flush_context(created.handle) {
+        tracing::debug!(target: "guest_attest", error = %e, handle = format_args!("0x{:08x}", created.handle), "flush_context after evict_control failed");
+    }
 
     tracing::trace!(target: "guest_attest", persistent_handle = format_args!("0x{:08x}", ECC_SIGNING_KEY_PERSISTENT_HANDLE), "ECC signing key persisted");
 
@@ -114,7 +116,9 @@ pub fn ensure_persistent_ak(tpm: &Tpm) -> io::Result<()> {
     // treat as success if the persistent handle now resolves via ReadPublic.
     tpm.evict_control(AK_PERSISTENT_HANDLE, created.handle)?;
 
-    let _ = tpm.flush_context(created.handle);
+    if let Err(e) = tpm.flush_context(created.handle) {
+        tracing::debug!(target: "guest_attest", error = %e, handle = format_args!("0x{:08x}", created.handle), "flush_context after evict_control failed");
+    }
 
     Ok(())
 }

@@ -399,7 +399,7 @@ fn parse_event_log_event1(data: &[u8]) -> io::Result<EventLog> {
 }
 
 fn parse_event1_entry(data: &[u8], cursor: &mut usize) -> io::Result<Event> {
-    if data.len() - *cursor < 28 {
+    if data.len().saturating_sub(*cursor) < 28 {
         return Err(io::Error::new(
             io::ErrorKind::UnexpectedEof,
             "event log truncated mid-entry",
@@ -453,7 +453,7 @@ fn parse_event2_entries_from(
 ) -> io::Result<()> {
     while *cursor < data.len() {
         let entry_start = *cursor;
-        if data.len() - *cursor < 12 {
+        if data.len().saturating_sub(*cursor) < 12 {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
                 "event log truncated mid-entry",

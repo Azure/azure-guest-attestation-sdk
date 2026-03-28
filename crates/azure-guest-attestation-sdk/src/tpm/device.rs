@@ -110,6 +110,11 @@ mod unix {
     use std::io::Write;
     use std::sync::Mutex;
 
+    /// Upper bound on TPM 2.0 response size.  The TPM spec limits most
+    /// responses to a few KiB; this generous cap prevents a malformed
+    /// response header from causing a multi-GiB allocation.
+    const MAX_TPM_RESPONSE_SIZE: usize = 64 * 1024;
+
     pub struct Tpm {
         file: Mutex<std::fs::File>,
     }
@@ -134,7 +139,10 @@ mod unix {
         }
 
         pub fn transmit(&self, command: &[u8]) -> io::Result<Vec<u8>> {
-            let mut f = self.file.lock().unwrap();
+            let mut f = self
+                .file
+                .lock()
+                .map_err(|_| io::Error::other("TPM mutex poisoned"))?;
 
             // Write full command
             f.write_all(command)?;
@@ -149,6 +157,12 @@ mod unix {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "Invalid TPM response length",
+                ));
+            }
+            if size > MAX_TPM_RESPONSE_SIZE {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("TPM response size {size} exceeds maximum {MAX_TPM_RESPONSE_SIZE}"),
                 ));
             }
             let mut resp = Vec::with_capacity(size);
@@ -218,7 +232,10 @@ mod windows {
                     "Command too large",
                 ));
             }
-            let _g = self.lock.lock().unwrap();
+            let _g = self
+                .lock
+                .lock()
+                .map_err(|_| io::Error::other("TPM mutex poisoned"))?;
             let mut buf = vec![0u8; 8192];
             let mut out_len: u32 = buf.len() as u32;
             // SAFETY: Make an FFI call.
@@ -389,7 +406,9 @@ mod vtpm {
     impl RefTpm {
         pub fn transmit(&self, command: &[u8]) -> io::Result<Vec<u8>> {
             let state = SHARED_STATE.get_or_init(init_shared_state);
-            let mut guard = state.lock().unwrap();
+            let mut guard = state
+                .lock()
+                .map_err(|_| io::Error::other("TPM mutex poisoned"))?;
             let mut buf = [0u8; 8192];
             let mut req = command.to_vec();
             let sz = guard

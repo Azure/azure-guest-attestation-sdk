@@ -426,7 +426,7 @@ impl AttestationClient {
             isolation,
         };
 
-        let json = params.to_json_string();
+        let json = params.to_json_string()?;
 
         Ok(AttestationReport {
             json,

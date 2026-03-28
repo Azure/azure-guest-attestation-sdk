@@ -371,8 +371,9 @@ pub struct GuestAttestationParameters {
 
 impl GuestAttestationParameters {
     /// Serialize the parameters to a JSON string.
-    pub fn to_json_string(&self) -> String {
-        serde_json::to_string(self).unwrap_or_default()
+    pub fn to_json_string(&self) -> io::Result<String> {
+        serde_json::to_string(self)
+            .map_err(|e| io::Error::other(format!("attestation params serialization: {e}")))
     }
 }
 
@@ -431,7 +432,8 @@ pub fn build_tee_only_payload_from_evidence(
                 "SnpReport": STANDARD.encode(&evidence.tee_report),
                 "VcekCertChain": STANDARD.encode(&vcek_chain)
             });
-            let snp_bytes = serde_json::to_vec(&snp_report_json).unwrap_or_default();
+            let snp_bytes = serde_json::to_vec(&snp_report_json)
+                .map_err(|e| io::Error::other(format!("SNP report JSON serialization: {e}")))?;
             ("report".to_string(), snp_bytes)
         }
         crate::report::CvmReportType::TdxVmReport => {
@@ -477,7 +479,8 @@ pub fn build_tee_only_payload(tpm: &Tpm) -> io::Result<(String, crate::report::C
                 "SnpReport": STANDARD.encode(snp_slice),
                 "VcekCertChain": STANDARD.encode(&vcek_chain)
             });
-            let snp_bytes = serde_json::to_vec(&snp_report_json).unwrap_or_default();
+            let snp_bytes = serde_json::to_vec(&snp_report_json)
+                .map_err(|e| io::Error::other(format!("SNP report JSON serialization: {e}")))?;
             ("report".to_string(), snp_bytes)
         }
         crate::report::CvmReportType::TdxVmReport => {
@@ -1083,7 +1086,7 @@ mod tests {
                 evidence: None,
             },
         };
-        let json = params.to_json_string();
+        let json = params.to_json_string().unwrap();
         assert!(!json.is_empty());
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["AttestationProtocolVersion"], "2.0");
@@ -1118,7 +1121,7 @@ mod tests {
                 evidence: None,
             },
         };
-        let json = params.to_json_string();
+        let json = params.to_json_string().unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert!(v["ClientPayload"].is_object());
         assert_eq!(v["ClientPayload"].as_object().unwrap().len(), 0);
@@ -1151,7 +1154,7 @@ mod tests {
                 evidence: None,
             },
         };
-        let json = params.to_json_string();
+        let json = params.to_json_string().unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert!(v["ClientPayload"].is_object());
         assert_eq!(v["ClientPayload"].as_object().unwrap().len(), 0);
@@ -1420,7 +1423,7 @@ mod tests {
                 evidence: None,
             },
         };
-        let json = params.to_json_string();
+        let json = params.to_json_string().unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert!(v["ClientPayload"].is_object());
         assert_eq!(v["ClientPayload"].as_object().unwrap().len(), 0);
@@ -1454,7 +1457,7 @@ mod tests {
                 evidence: None,
             },
         };
-        let json = params.to_json_string();
+        let json = params.to_json_string().unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         let cp = v["ClientPayload"].as_object().unwrap();
         assert_eq!(cp.len(), 2);
@@ -1495,7 +1498,7 @@ mod tests {
                 evidence: None,
             },
         };
-        let json = params.to_json_string();
+        let json = params.to_json_string().unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         let cp = v["ClientPayload"].as_object().unwrap();
         let nested_b64 = cp["nested"].as_str().unwrap();
@@ -1532,7 +1535,7 @@ mod tests {
                 evidence: None,
             },
         };
-        let json = params.to_json_string();
+        let json = params.to_json_string().unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert!(v["ClientPayload"].is_object());
         assert_eq!(v["ClientPayload"].as_object().unwrap().len(), 0);
@@ -1604,7 +1607,7 @@ mod tests {
                 evidence: None,
             },
         };
-        let json = params.to_json_string();
+        let json = params.to_json_string().unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         // OSType is base64(str) encoded
         let os_type_b64 = v["OSType"].as_str().unwrap();
