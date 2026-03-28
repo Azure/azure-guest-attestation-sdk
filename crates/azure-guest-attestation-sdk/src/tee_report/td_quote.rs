@@ -10,7 +10,6 @@
 //! `ptr::read_unaligned`. Parsing helpers are provided to safely walk a quote
 //! without relying on alignment guarantees.
 
-use core::convert::TryInto;
 use core::fmt;
 use core::mem::size_of;
 use core::ptr;
@@ -872,7 +871,7 @@ fn parse_pck_cert_chain(payload: &[u8]) -> Result<TdQuotePckCertChain<'_>, TdQuo
         });
     }
 
-    let declared_len = u16::from_le_bytes(payload[0..2].try_into().unwrap()) as usize;
+    let declared_len = u16::from_le_bytes([payload[0], payload[1]]) as usize;
     if declared_len == 0 || declared_len > payload.len() - 2 {
         return Ok(TdQuotePckCertChain {
             cert_chain: payload,
@@ -890,7 +889,7 @@ fn parse_pck_cert_chain(payload: &[u8]) -> Result<TdQuotePckCertChain<'_>, TdQuo
 
     let mut qe_identity = None;
     if payload.len() >= offset + 2 {
-        let qe_len = u16::from_le_bytes(payload[offset..offset + 2].try_into().unwrap()) as usize;
+        let qe_len = u16::from_le_bytes([payload[offset], payload[offset + 1]]) as usize;
         offset += 2;
         if qe_len > 0 {
             if payload.len() < offset + qe_len {
@@ -948,12 +947,12 @@ impl<'a> ByteCursor<'a> {
 
     fn take_u16(&mut self, context: &'static str) -> Result<u16, TdQuoteSignatureError> {
         let bytes = self.take(2, context)?;
-        Ok(u16::from_le_bytes(bytes.try_into().unwrap()))
+        Ok(u16::from_le_bytes([bytes[0], bytes[1]]))
     }
 
     fn take_u32(&mut self, context: &'static str) -> Result<u32, TdQuoteSignatureError> {
         let bytes = self.take(4, context)?;
-        Ok(u32::from_le_bytes(bytes.try_into().unwrap()))
+        Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
     }
 }
 
@@ -996,7 +995,12 @@ fn read_signature<'a>(
         };
     }
 
-    let declared_len = u32::from_le_bytes(bytes[*cursor..*cursor + 4].try_into().unwrap());
+    let declared_len = u32::from_le_bytes([
+        bytes[*cursor],
+        bytes[*cursor + 1],
+        bytes[*cursor + 2],
+        bytes[*cursor + 3],
+    ]);
     *cursor += 4;
     let sig_len = declared_len as usize;
 

@@ -8,7 +8,6 @@
 // to make command construction and parsing more explicit.
 use bitfield_struct::bitfield;
 use std::cell::RefCell;
-use std::convert::TryInto;
 use std::fmt;
 use std::io;
 use std::str::FromStr;
@@ -1514,7 +1513,7 @@ impl TpmUnmarshal for u32 {
         if *c + 4 > d.len() {
             return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "u32"));
         }
-        let v = u32::from_be_bytes(d[*c..*c + 4].try_into().unwrap());
+        let v = u32::from_be_bytes([d[*c], d[*c + 1], d[*c + 2], d[*c + 3]]);
         *c += 4;
         Ok(v)
     }

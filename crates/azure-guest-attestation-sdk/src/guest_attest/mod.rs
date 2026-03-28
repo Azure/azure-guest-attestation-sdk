@@ -243,11 +243,18 @@ where
         let map = serializer.serialize_map(Some(0))?;
         return map.end();
     }
-    let obj = v.as_object().unwrap();
+    // SAFETY: v.is_object() was checked above, so as_object() is infallible.
+    let obj = match v.as_object() {
+        Some(o) => o,
+        None => {
+            let map = serializer.serialize_map(Some(0))?;
+            return map.end();
+        }
+    };
     let mut m = serializer.serialize_map(Some(obj.len()))?;
     for (k, v) in obj.iter() {
         let val_str = if v.is_string() {
-            v.as_str().unwrap().to_string()
+            v.as_str().unwrap_or_default().to_string()
         } else {
             v.to_string()
         };
