@@ -585,7 +585,7 @@ mod tests {
             let mut expected = Vec::with_capacity(k);
             expected.push(0x00);
             expected.push(0x01);
-            expected.extend(std::iter::repeat(0xFF).take(ps_len));
+            expected.extend(std::iter::repeat_n(0xFF, ps_len));
             expected.push(0x00);
             expected.extend_from_slice(DER_PREFIX);
             expected.extend_from_slice(&digest);
@@ -641,12 +641,12 @@ mod tests {
                 tracing::debug!(target: "guest_attest", error = %e, "[vtpm-test] skipping: ensure_persistent_ak failed");
                 return;
             }
-            let (pub_area, _h, _ci, _sig) = match get_ephemeral_key(&tpm, &[0, 1, 2]) {
+            let ek = match get_ephemeral_key(&tpm, &[0, 1, 2]) {
                 Ok(v) => v,
                 Err(_) => return,
             };
             let mut cur = 0usize;
-            let parsed = Tpm2bPublic::unmarshal(&pub_area, &mut cur).expect("parse pub");
+            let parsed = Tpm2bPublic::unmarshal(&ek.public, &mut cur).expect("parse pub");
             if parsed.inner.auth_policy.0.is_empty() {
                 panic!("Expected non-empty policy for multi-PCR bound key");
             }
@@ -673,13 +673,13 @@ mod tests {
                 Ok(t) => t,
                 Err(_) => return,
             };
-            let (pub_area, handle_be, _ci, _sig) = match get_ephemeral_key(&tpm, &[]) {
+            let ek = match get_ephemeral_key(&tpm, &[]) {
                 Ok(v) => v,
                 Err(_) => return,
             };
-            let handle = u32::from_be_bytes(handle_be[0..4].try_into().unwrap());
+            let handle = ek.handle;
             let mut cur = 0usize;
-            let parsed = Tpm2bPublic::unmarshal(&pub_area, &mut cur).expect("parse pub");
+            let parsed = Tpm2bPublic::unmarshal(&ek.public, &mut cur).expect("parse pub");
             let modulus_be = &parsed.inner.unique.0;
             if modulus_be.len() != 256 {
                 return;
@@ -759,13 +759,13 @@ mod tests {
                 Err(_) => return,
             }; // skip if ref TPM absent
                // Create policy-bound key (PCR0)
-            let (pub_area, handle_be, _ci, _sig) = match get_ephemeral_key(&tpm, &[0]) {
+            let ek = match get_ephemeral_key(&tpm, &[0]) {
                 Ok(v) => v,
                 Err(_) => return,
             };
-            let handle = u32::from_be_bytes(handle_be[0..4].try_into().unwrap());
+            let handle = ek.handle;
             let mut cur = 0usize;
-            let parsed = Tpm2bPublic::unmarshal(&pub_area, &mut cur).expect("parse pub");
+            let parsed = Tpm2bPublic::unmarshal(&ek.public, &mut cur).expect("parse pub");
             if parsed.inner.unique.0.len() != 256 {
                 return;
             } // only test RSA2048
