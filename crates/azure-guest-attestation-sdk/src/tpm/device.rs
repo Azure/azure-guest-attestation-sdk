@@ -178,8 +178,6 @@ mod windows {
 
     impl Tpm {
         pub fn open() -> io::Result<Self> {
-            let verbose = std::env::var("CVM_TPM_VERBOSE").is_ok();
-
             let params2 = win_ffi::TBS_CONTEXT_PARAMS2 {
                 version: win_ffi::TPM_VERSION_20, // required for PARAMS2  [1](https://learn.microsoft.com/en-us/windows/win32/api/tbs/ns-tbs-tbs_context_params2)
                 Anonymous: win_ffi::TBS_CONTEXT_PARAMS2_FLAGS { asUINT32: 0x6 }, // includeTpm12 | includeTpm20
@@ -194,16 +192,13 @@ mod windows {
                 )
             };
             if rc == win_ffi::TBS_SUCCESS {
-                if verbose {
-                    tracing::info!(target: "guest_attest", "TBS context create success");
-                }
+                tracing::trace!(target: "guest_attest", "TBS context create success");
                 return Ok(Tpm {
                     handle,
                     lock: Mutex::new(()),
                 });
-            } else if verbose {
-                tracing::warn!(target: "guest_attest", rc = format_args!("0x{rc:08x}"), "TBS context create failed");
             }
+            tracing::trace!(target: "guest_attest", rc = format_args!("0x{rc:08x}"), "TBS context create failed");
 
             if rc == 0x8028_400F {
                 return Err(io::Error::new(

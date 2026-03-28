@@ -2253,12 +2253,10 @@ impl TpmMarshal for NvPublic {
         // Spec: These bits are set by the TPM, not the caller, and presence (especially platformcreate)
         // changes which hierarchy can authorize NV undefine. Stripping ensures owner-defined indices behave.
         let masked_attributes = self.attributes & !(1u32 << 30) & !(1u32 << 29);
-        if *crate::tpm::helpers::TPM_DEBUG_NV {
-            if masked_attributes != self.attributes {
-                tracing::debug!(target: "guest_attest", orig = format_args!("0x{:08x}", self.attributes), masked = format_args!("0x{:08x}", masked_attributes), "NvPublic.marshal masking attributes");
-            } else {
-                tracing::debug!(target: "guest_attest", attrs = format_args!("0x{:08x}", self.attributes), "NvPublic.marshal attributes");
-            }
+        if masked_attributes != self.attributes {
+            tracing::trace!(target: "guest_attest", orig = format_args!("0x{:08x}", self.attributes), masked = format_args!("0x{:08x}", masked_attributes), "NvPublic.marshal masking attributes");
+        } else {
+            tracing::trace!(target: "guest_attest", attrs = format_args!("0x{:08x}", self.attributes), "NvPublic.marshal attributes");
         }
         self.nv_index.marshal(&mut inner);
         self.name_alg.marshal(&mut inner);

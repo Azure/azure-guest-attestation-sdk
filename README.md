@@ -336,7 +336,9 @@ Environment variables:
 
 * `AZURE_GUEST_ATTESTATION_LOG` – Override default (INFO) filter (`e.g. guest_attest=debug`)
 * `RUST_LOG` – Fallback if the above unset
-* `CVM_TPM_DEBUG`, `CVM_TPM_VERBOSE`, `CVM_TPM_DEBUG_NV` – Legacy fine-grained gates enabling additional debug-level output
+
+Set `AZURE_GUEST_ATTESTATION_LOG=guest_attest=trace` to enable fine-grained
+TPM wire-level diagnostics.
 
 All module logs share target `guest_attest`.
 

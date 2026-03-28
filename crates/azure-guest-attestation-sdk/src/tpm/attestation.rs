@@ -16,7 +16,6 @@ use crate::report::CvmAttestationReport;
 use crate::report::RuntimeClaims;
 use crate::tpm::commands::TpmCommandExt;
 use crate::tpm::helpers::hex_fmt;
-use crate::tpm::helpers::{TPM_DEBUG, TPM_DEBUG_NV};
 
 /// Persistent handle for the Attestation Key (AK) public object.
 pub const AK_PERSISTENT_HANDLE: u32 = 0x81000003;
@@ -45,13 +44,9 @@ pub struct EphemeralKey {
 /// Create an ECC P-256 signing key and persist it to TPM NV space.
 /// Returns the public key bytes.
 pub fn create_and_persist_ecc_signing_key(tpm: &Tpm) -> io::Result<Vec<u8>> {
-    let debug = *TPM_DEBUG;
-
     // Check if key already exists at the persistent handle
     if let Ok(pub_bytes) = tpm.read_public(ECC_SIGNING_KEY_PERSISTENT_HANDLE) {
-        if debug {
-            tracing::debug!(target: "guest_attest", "ECC signing key already exists at persistent handle");
-        }
+        tracing::trace!(target: "guest_attest", "ECC signing key already exists at persistent handle");
         return Ok(pub_bytes);
     }
 
@@ -59,9 +54,7 @@ pub fn create_and_persist_ecc_signing_key(tpm: &Tpm) -> io::Result<Vec<u8>> {
     let public_template = ecc_unrestricted_signing_public();
     let created = tpm.create_primary_ecc(Hierarchy::Owner, public_template)?;
 
-    if debug {
-        tracing::debug!(target: "guest_attest", handle = format_args!("0x{:08x}", created.handle), "Created ECC primary key");
-    }
+    tracing::trace!(target: "guest_attest", handle = format_args!("0x{:08x}", created.handle), "Created ECC primary key");
 
     // Persist the key
     tpm.evict_control(ECC_SIGNING_KEY_PERSISTENT_HANDLE, created.handle)?;
@@ -69,9 +62,7 @@ pub fn create_and_persist_ecc_signing_key(tpm: &Tpm) -> io::Result<Vec<u8>> {
     // Flush the transient handle
     let _ = tpm.flush_context(created.handle);
 
-    if debug {
-        tracing::debug!(target: "guest_attest", persistent_handle = format_args!("0x{:08x}", ECC_SIGNING_KEY_PERSISTENT_HANDLE), "ECC signing key persisted");
-    }
+    tracing::trace!(target: "guest_attest", persistent_handle = format_args!("0x{:08x}", ECC_SIGNING_KEY_PERSISTENT_HANDLE), "ECC signing key persisted");
 
     // Read and return the public key from the persistent handle
     tpm.read_public(ECC_SIGNING_KEY_PERSISTENT_HANDLE)
@@ -313,8 +304,6 @@ pub fn get_tee_report_and_type(
 }
 
 fn define_user_data_index(tpm: &Tpm) -> io::Result<()> {
-    let debug = *TPM_DEBUG_NV;
-
     let attr_bits = TpmaNvBits::new()
         .with_nv_ownerwrite(true)
         .with_nv_authwrite(true)
@@ -328,14 +317,10 @@ fn define_user_data_index(tpm: &Tpm) -> io::Result<()> {
         auth_policy: Vec::new(),
         data_size: 64,
     };
-    if debug {
-        tracing::debug!(target: "guest_attest", nv_index = format_args!("0x{NV_INDEX_USER_DATA:08x}"), attrs = format_args!("0x{attrs:08x}"), "Defining user-data NV index");
-    }
+    tracing::trace!(target: "guest_attest", nv_index = format_args!("0x{NV_INDEX_USER_DATA:08x}"), attrs = format_args!("0x{attrs:08x}"), "Defining user-data NV index");
     if let Err(e) = tpm.nv_define_space(public, &[]) {
         // If define fails because index already exists (race) we proceed; otherwise return error.
-        if debug {
-            tracing::debug!(target: "guest_attest", error = %e, "Define attempt error");
-        }
+        tracing::trace!(target: "guest_attest", error = %e, "Define attempt error");
         return Err(e);
     }
 
@@ -370,29 +355,20 @@ fn pad_user_data(input: &[u8]) -> [u8; 64] {
 /// Produce a PCR quote over the supplied PCR indices (0-23) using a transient
 /// attestation key. Returns (attestation, signature) byte blobs.
 pub fn get_pcr_quote(tpm: &Tpm, pcrs: &[u32]) -> io::Result<(Vec<u8>, Vec<u8>)> {
-    let debug = *TPM_DEBUG;
-    if debug {
-        tracing::debug!(target: "guest_attest", ?pcrs, "get_pcr_quote start");
-    }
+    tracing::trace!(target: "guest_attest", ?pcrs, "get_pcr_quote start");
     if let Err(e) = ensure_persistent_ak(tpm) {
-        if debug {
-            tracing::debug!(target: "guest_attest", error = %e, "ensure_persistent_ak before quote failed");
-        }
+        tracing::trace!(target: "guest_attest", error = %e, "ensure_persistent_ak before quote failed");
         return Err(e);
     }
     let (quote, signature) = match tpm.quote_with_key(AK_PERSISTENT_HANDLE, pcrs) {
         Ok(v) => v,
         Err(e) => {
-            if debug {
-                tracing::debug!(target: "guest_attest", error = %e, "TPM2_Quote failed");
-            }
+            tracing::trace!(target: "guest_attest", error = %e, "TPM2_Quote failed");
             return Err(e);
         }
     };
 
-    if debug {
-        tracing::debug!(target: "guest_attest", quote = %hex_fmt(&quote), signature = %hex_fmt(&signature), "PCR quote result");
-    }
+    tracing::trace!(target: "guest_attest", quote = %hex_fmt(&quote), signature = %hex_fmt(&signature), "PCR quote result");
 
     Ok((quote, signature))
 }

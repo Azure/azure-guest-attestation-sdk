@@ -41,10 +41,6 @@ struct Cli {
     #[arg(global = true, short = 'o', long)]
     out: Option<PathBuf>,
 
-    /// Enable verbose TPM debug logging (sets CVM_TPM_DEBUG=1 for this process)
-    #[arg(global = true, long = "debug-tpm")]
-    debug_tpm: bool,
-
     #[command(subcommand)]
     command: Commands,
 }
@@ -222,10 +218,6 @@ fn main() -> anyhow::Result<()> {
     // emit logs according to AZURE_GUEST_ATTESTATION_LOG / RUST_LOG environment filters.
     azure_guest_attestation_sdk::init_tracing();
     let cli = Cli::parse();
-    if cli.debug_tpm {
-        // Set env var early so lower layers can read it. Ignore failure if already set.
-        std::env::set_var("CVM_TPM_DEBUG", "1");
-    }
     let mut writer: Box<dyn Write> = match &cli.out {
         Some(p) => Box::new(File::create(p)?),
         None => Box::new(io::stdout()),
@@ -243,7 +235,7 @@ fn main() -> anyhow::Result<()> {
             let tpm = match Tpm::open() {
                 Ok(t) => t,
                 Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                    writeln!(writer, "TPM access via TBS failed (reported not found). If PowerShell 'get-tpm' shows TpmPresent=True this indicates a TBS accessibility or policy issue. Suggestions:\n  * Run: get-service tbs (should be Running)\n  * Restart service: Stop-Service tbs; Start-Service tbs\n  * Run: tpmtool getdeviceinformation\n  * Check: tpm.msc status\n  * If VM: ensure vTPM attached (Gen2, security settings)\n  * Set CVM_TPM_VERBOSE=1 and rerun for rc details")?;
+                    writeln!(writer, "TPM access via TBS failed (reported not found). If PowerShell 'get-tpm' shows TpmPresent=True this indicates a TBS accessibility or policy issue. Suggestions:\n  * Run: get-service tbs (should be Running)\n  * Restart service: Stop-Service tbs; Start-Service tbs\n  * Run: tpmtool getdeviceinformation\n  * Check: tpm.msc status\n  * If VM: ensure vTPM attached (Gen2, security settings)\n  * Set AZURE_GUEST_ATTESTATION_LOG=guest_attest=trace and rerun for details")?;
                     return Ok(());
                 }
                 Err(e) => return Err(anyhow::anyhow!("Failed to open TPM: {e}")),

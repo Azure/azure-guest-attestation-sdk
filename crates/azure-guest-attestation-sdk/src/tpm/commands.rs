@@ -32,7 +32,6 @@ use crate::tpm::device::RawTpm;
 use crate::tpm::helpers::build_command_custom_sessions;
 use crate::tpm::helpers::hex_fmt;
 use crate::tpm::helpers::SessionEntry;
-use crate::tpm::helpers::TPM_DEBUG;
 use crate::tpm::helpers::{
     build_command_no_sessions, build_command_pw_sessions, parse_tpm_rc_with_cmd,
     tpm_rc_from_io_error,
@@ -317,8 +316,6 @@ impl<T: RawTpm> TpmCommandExt for T {
         public_template: Tpm2bPublic,
         pcrs: &[u32],
     ) -> io::Result<CreatedPrimary> {
-        let debug = *TPM_DEBUG;
-
         let parameters = CreatePrimaryCommandParameters {
             in_sensitive: empty_sensitive_create(),
             in_public: public_template.clone(),
@@ -334,14 +331,7 @@ impl<T: RawTpm> TpmCommandExt for T {
 
         let resp = self.transmit_raw(&cmd)?;
         parse_tpm_rc_with_cmd(&resp, TpmCommandCode::CreatePrimary)?;
-        if debug {
-            let hex = resp
-                .iter()
-                .map(|b| format!("{b:02x}"))
-                .collect::<Vec<_>>()
-                .join("");
-            tracing::debug!(target: "guest_attest", response = %hex, "Create Primary Response");
-        }
+        tracing::trace!(target: "guest_attest", response = %hex_fmt(&resp), "Create Primary Response");
 
         if resp.len() < 14 {
             return Err(io::Error::new(
@@ -457,8 +447,6 @@ impl<T: RawTpm> TpmCommandExt for T {
         object_handle: u32,
         sign_handle: u32,
     ) -> io::Result<(Vec<u8>, Vec<u8>)> {
-        let debug = *TPM_DEBUG;
-
         let parameters = CertifyCommandParameters {
             qualifying_data: Tpm2bBytes(Vec::new()),
             scheme: TpmtSigScheme::Null,
@@ -468,9 +456,7 @@ impl<T: RawTpm> TpmCommandExt for T {
         let cmd = build_command_pw_sessions(TpmCommandCode::Certify, &handles, &[&[], &[]], |b| {
             cmd_body.parameters.marshal(b);
         });
-        if debug {
-            tracing::debug!(target: "guest_attest", object = format_args!("0x{object_handle:08x}"), sign = format_args!("0x{sign_handle:08x}"), cmd = %hex_fmt(&cmd), "Certify command (dual PW sessions)");
-        }
+        tracing::trace!(target: "guest_attest", object = format_args!("0x{object_handle:08x}"), sign = format_args!("0x{sign_handle:08x}"), cmd = %hex_fmt(&cmd), "Certify command (dual PW sessions)");
         let resp = self.transmit_raw(&cmd)?;
         parse_tpm_rc_with_cmd(&resp, TpmCommandCode::Certify)?;
         if resp.len() < 14 {
