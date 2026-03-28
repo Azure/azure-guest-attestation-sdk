@@ -38,16 +38,19 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```no_run
 //! use azure_guest_attestation_sdk::tpm::{Tpm, TpmCommandExt};
 //!
-//! // Open the platform TPM
-//! let tpm = Tpm::open()?;
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     // Open the platform TPM
+//!     let tpm = Tpm::open()?;
 //!
-//! // Read PCR values
-//! let pcrs = tpm.read_pcrs_sha256(&[0, 1, 2, 7])?;
-//! for (index, digest) in &pcrs {
-//!     println!("PCR{}: {}", index, hex::encode(digest));
+//!     // Read PCR values
+//!     let pcrs = tpm.read_pcrs_sha256(&[0, 1, 2, 7])?;
+//!     for (index, digest) in &pcrs {
+//!         println!("PCR{}: {}", index, hex::encode(digest));
+//!     }
+//!     Ok(())
 //! }
 //! ```
 

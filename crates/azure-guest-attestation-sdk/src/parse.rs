@@ -9,14 +9,19 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```no_run
 //! use azure_guest_attestation_sdk::parse;
 //!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # let raw_bytes = vec![0u8; 1184];
+//! # let quote_bytes = vec![0u8; 100];
 //! let snp = parse::snp_report(&raw_bytes)?;
 //! println!("SNP policy: 0x{:016x}", snp.policy);
 //!
 //! let quote = parse::td_quote(&quote_bytes)?;
 //! println!("TDX quote version: {}", quote.header.version);
+//! # Ok(())
+//! # }
 //! ```
 
 use std::io;

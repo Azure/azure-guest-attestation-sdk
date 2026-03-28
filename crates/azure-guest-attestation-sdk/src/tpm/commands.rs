@@ -18,11 +18,14 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```no_run
 //! use azure_guest_attestation_sdk::tpm::{Tpm, TpmCommandExt};
 //!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let tpm = Tpm::open()?;
 //! let pcr_values = tpm.read_pcrs_sha256(&[0, 1, 2])?;
+//! # Ok(())
+//! # }
 //! ```
 
 use crate::tpm::device::RawTpm;

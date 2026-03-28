@@ -13,19 +13,22 @@
 //!
 //! # Quick start
 //!
-//! ```ignore
+//! ```no_run
 //! use azure_guest_attestation_sdk::{AttestationClient, Provider};
 //!
-//! // Create a client (owns TPM internally)
-//! let client = AttestationClient::new()?;
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     // Create a client (owns TPM internally)
+//!     let client = AttestationClient::new()?;
 //!
-//! // One-shot attestation against MAA (base URL — the SDK appends the
-//! // correct path and api-version automatically)
-//! let result = client.attest_guest(
-//!     Provider::maa("https://sharedeus.eus.attest.azure.net"),
-//!     None,
-//! )?;
-//! println!("Token: {}", result.token.unwrap_or_default());
+//!     // One-shot attestation against MAA (base URL — the SDK appends the
+//!     // correct path and api-version automatically)
+//!     let result = client.attest_guest(
+//!         Provider::maa("https://sharedeus.eus.attest.azure.net"),
+//!         None,
+//!     )?;
+//!     println!("Token: {}", result.token.unwrap_or_default());
+//!     Ok(())
+//! }
 //! ```
 //!
 //! # Layered API
@@ -100,7 +103,7 @@ pub enum LogFormat {
 /// Use [`Default::default()`] for sensible defaults (INFO level, text format),
 /// then override individual fields as needed.
 ///
-/// ```ignore
+/// ```no_run
 /// use azure_guest_attestation_sdk::{TracingConfig, LogFormat};
 ///
 /// azure_guest_attestation_sdk::init_tracing_with(TracingConfig {
@@ -162,7 +165,7 @@ pub fn init_tracing() {
 /// programmatically (e.g. from an application that uses Rust edition 2024
 /// where `std::env::set_var` is `unsafe`).
 ///
-/// ```ignore
+/// ```no_run
 /// use azure_guest_attestation_sdk::{TracingConfig, LogFormat};
 ///
 /// azure_guest_attestation_sdk::init_tracing_with(TracingConfig {
