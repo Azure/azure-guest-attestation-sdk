@@ -1,9 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-// Missing rustdoc on public items is allowed for the initial v0.1 release.
-// Comprehensive documentation will be added in a follow-up pass.
-#![allow(missing_docs)]
+#![warn(missing_docs)]
 
 //! Azure Guest Attestation SDK
 //!
@@ -49,6 +47,7 @@ pub mod parse;
 // ---- Internal implementation modules (still public for advanced users) -----
 pub mod guest_attest;
 pub mod report;
+/// TEE report parsing for SNP, TDX, and VBS attestation reports.
 pub mod tee_report;
 pub mod tpm;
 

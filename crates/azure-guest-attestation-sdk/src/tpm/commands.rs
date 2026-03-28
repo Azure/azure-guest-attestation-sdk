@@ -65,13 +65,21 @@ pub struct LoadedObject {
 /// TPM command extension methods built on any RawTpm implementation.
 /// The extension only implements a subset of TPM commands required by CVM attestation.
 pub trait TpmCommandExt: RawTpm {
+    /// Read the public area of a loaded object.
     fn read_public(&self, object_handle: u32) -> io::Result<Vec<u8>>;
+    /// Check whether an NV index is defined, returning its public area if present.
     fn find_nv_index(&self, nv_index: u32) -> io::Result<Option<NvPublic>>;
+    /// Read the full contents of an NV index (handles chunked reads internally).
     fn read_nv_index(&self, nv_index: u32) -> io::Result<Vec<u8>>;
+    /// Write data to an NV index (handles chunked writes internally).
     fn write_nv_index(&self, nv_index: u32, data: &[u8]) -> io::Result<()>;
+    /// Read the public area of an NV index.
     fn nv_read_public(&self, nv_index: u32) -> io::Result<NvPublic>;
+    /// Define a new NV index with the given public area and authorization value.
     fn nv_define_space(&self, public: NvPublic, auth_value: &[u8]) -> io::Result<()>;
+    /// Undefine (delete) an NV index.
     fn nv_undefine_space(&self, nv_index: u32) -> io::Result<()>;
+    /// Create a primary RSA key in the specified hierarchy with optional PCR creation data.
     fn create_primary(
         &self,
         hierarchy: Hierarchy,
@@ -84,6 +92,7 @@ pub trait TpmCommandExt: RawTpm {
         hierarchy: Hierarchy,
         public_template: Tpm2bPublicEcc,
     ) -> io::Result<CreatedPrimary>;
+    /// Load a key (private + public) under a parent handle.
     fn load(
         &self,
         parent_handle: u32,
@@ -91,17 +100,24 @@ pub trait TpmCommandExt: RawTpm {
         in_private: &[u8],
         in_public: &[u8],
     ) -> io::Result<LoadedObject>;
+    /// Generate a TPM2_Quote over the specified PCRs using the given signing key.
     fn quote_with_key(&self, key_handle: u32, pcrs: &[u32]) -> io::Result<(Vec<u8>, Vec<u8>)>;
+    /// Certify an object with a signing key. Returns (attestation, signature).
     fn certify_with_key(
         &self,
         object_handle: u32,
         sign_handle: u32,
     ) -> io::Result<(Vec<u8>, Vec<u8>)>;
+    /// Flush a transient object from the TPM.
     fn flush_context(&self, handle: u32) -> io::Result<()>;
+    /// Read PCR values for a specific hash algorithm.
     fn read_pcrs_for_alg(&self, alg: PcrAlgorithm, pcrs: &[u32])
         -> io::Result<Vec<(u32, Vec<u8>)>>;
+    /// Read PCR values from the SHA-256 bank.
     fn read_pcrs_sha256(&self, pcrs: &[u32]) -> io::Result<Vec<(u32, Vec<u8>)>>;
+    /// Compute a policy digest binding to the current values of the given PCRs.
     fn compute_pcr_policy_digest(&self, pcrs: &[u32]) -> io::Result<Vec<u8>>;
+    /// Make a transient key persistent (or remove a persistent key).
     fn evict_control(&self, persistent_handle: u32, transient_handle: u32) -> io::Result<()>;
     /// Perform TPM2_RSA_Decrypt with the specified scheme.
     /// Returns the plaintext bytes (TPM2B_PUBLIC_KEY_RSA outData contents).
@@ -116,7 +132,9 @@ pub trait TpmCommandExt: RawTpm {
     /// session_type: 0x03 for TPM_SE_POLICY, 0x02 for HMAC, etc.
     /// auth_hash_alg: e.g., TpmAlgId::Sha256.into(). Uses symmetric alg = TPM_ALG_NULL.
     fn start_auth_session(&self, session_type: u8, auth_hash_alg: u16) -> io::Result<u32>;
+    /// Bind a policy session to the current PCR values.
     fn policy_pcr(&self, session_handle: u32, pcrs: &[u32]) -> io::Result<()>;
+    /// Unseal a sealed data blob using password authorization.
     fn unseal(&self, item_handle: u32, auth_value: &[u8]) -> io::Result<Vec<u8>>;
     /// Sign a digest using the specified key handle. Returns the signature.
     fn sign(&self, key_handle: u32, digest: &[u8]) -> io::Result<TpmtSignature>;

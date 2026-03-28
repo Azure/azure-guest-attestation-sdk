@@ -1,6 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+// Internal implementation — documentation deferred.
+#![allow(missing_docs)]
+
 use crate::tpm::types::TpmCommandCode;
 use crate::tpm::types::TpmMarshal;
 use crate::tpm::types::TPM_RS_PW;

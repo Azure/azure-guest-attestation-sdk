@@ -1,6 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+// Internal implementation — documentation deferred.
+#![allow(missing_docs)]
+
 use crate::tpm::types::PcrAlgorithm;
 use digest::Digest;
 use sha1::Sha1;

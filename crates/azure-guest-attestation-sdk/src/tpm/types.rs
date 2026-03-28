@@ -1,6 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+// TPM wire-format structures — per-field documentation deferred.
+#![allow(missing_docs)]
+
 //! Minimal TPM2 type definitions with binary (un)marshalling helpers.
 //! These are intentionally partial and only cover what current code paths need.
 

@@ -17,7 +17,7 @@ use crate::report::RuntimeClaims;
 use crate::tpm::commands::TpmCommandExt;
 use crate::tpm::helpers::hex_fmt;
 
-// Persistent handle for Attestation Key public object (was previously mis-prefixed as NV_)
+/// Persistent handle for the Attestation Key (AK) public object.
 pub const AK_PERSISTENT_HANDLE: u32 = 0x81000003;
 
 /// Persistent handle for ECC signing key
@@ -135,6 +135,8 @@ pub fn get_ak_pub(tpm: &Tpm) -> io::Result<Vec<u8>> {
     tpm.read_public(AK_PERSISTENT_HANDLE)
 }
 
+/// Read the Attestation Key certificate from the TPM NV index.
+/// Returns an empty `Vec` if the NV index is not defined.
 pub fn get_ak_cert(tpm: &Tpm) -> io::Result<Vec<u8>> {
     // Attempt to read NV index directly. If not defined, map to NotFound
     match tpm.nv_read_public(NV_INDEX_AK_CERT) {

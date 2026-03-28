@@ -54,8 +54,10 @@
 //! }
 //! ```
 
+/// CVM-specific attestation operations (AK management, quotes, ephemeral keys).
 pub mod attestation;
 pub mod commands;
+/// Platform-agnostic TPM device communication.
 pub mod device;
 pub mod event_log;
 pub mod helpers;

@@ -67,17 +67,25 @@ impl StageTimer {
 // OS information
 // ---------------------------------------------------------------------------
 
+/// Detected operating system information for attestation payloads.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OsInfo {
+    /// Operating system type (e.g. "Linux", "Windows").
     pub os_type: String,
+    /// Distribution name (e.g. "Ubuntu").
     pub distro: String,
+    /// Major version number.
     pub version_major: u32,
+    /// Minor version number.
     pub version_minor: u32,
+    /// Build string.
     pub build: String,
+    /// PCR indices included in attestation quotes.
     pub pcr_list: Vec<u32>,
 }
 
 impl OsInfo {
+    /// Detect the current operating system and return populated `OsInfo`.
     pub fn detect() -> io::Result<Self> {
         let os = std::env::consts::OS;
         match os {
@@ -135,24 +143,34 @@ fn parse_version_pair(v: &str) -> (u32, u32) {
 // Isolation / TEE types
 // ---------------------------------------------------------------------------
 
+/// VM isolation type for attestation.
 #[derive(Debug, Clone, Serialize)]
 pub enum IsolationType {
+    /// AMD SEV-SNP isolation.
     SevSnp,
+    /// Intel TDX isolation.
     Tdx,
+    /// Trusted Launch (no hardware TEE).
     TrustedLaunch,
 }
 
+/// Isolation metadata included in attestation requests.
 #[derive(Debug, Clone, Serialize)]
 pub struct IsolationInfo {
+    /// The VM isolation type.
     #[serde(rename = "Type")]
     pub vm_type: IsolationType,
+    /// TEE evidence, if available.
     #[serde(rename = "Evidence", skip_serializing_if = "Option::is_none")]
     pub evidence: Option<IsolationEvidence>,
 }
 
+/// Evidence collected from the TEE for attestation.
 #[derive(Debug, Clone)]
 pub struct IsolationEvidence {
+    /// The TEE proof (SNP report + VCEK chain, or TDX quote).
     pub tee_proof: TeeProof,
+    /// Runtime data accompanying the proof.
     pub runtime_data: Vec<u8>,
 }
 
@@ -196,11 +214,16 @@ impl Serialize for IsolationEvidence {
 /// TEE proof types (subset for SNP + TDX).
 #[derive(Debug, Clone)]
 pub enum TeeProof {
+    /// AMD SEV-SNP proof.
     Snp {
+        /// Raw SNP attestation report bytes.
         snp_report: Vec<u8>,
+        /// VCEK certificate chain (PEM).
         vcek_chain: Vec<u8>,
     },
+    /// Intel TDX proof.
     Tdx {
+        /// Raw TD quote bytes.
         td_quote: Vec<u8>,
     },
 }
@@ -268,71 +291,101 @@ where
 // TPM / attestation parameter types
 // ---------------------------------------------------------------------------
 
+/// A single PCR index/digest pair.
 #[derive(Debug, Clone, Serialize)]
 pub struct PcrEntry {
+    /// PCR index (0–23).
     #[serde(rename = "Index")]
     pub index: u32,
+    /// SHA-256 digest value.
     #[serde(rename = "Digest", serialize_with = "as_b64")]
     pub digest: Vec<u8>,
 }
 
+/// TPM-related artifacts included in attestation requests.
 #[derive(Debug, Clone, Serialize)]
 pub struct TpmInfo {
+    /// Attestation Key (AK) certificate (DER).
     #[serde(rename = "AikCert", serialize_with = "as_b64")]
     pub ak_cert: Vec<u8>,
+    /// AK public area (TPM2B_PUBLIC).
     #[serde(rename = "AikPub", serialize_with = "as_b64")]
     pub ak_pub: Vec<u8>,
+    /// PCR quote blob (TPMS_ATTEST).
     #[serde(rename = "PcrQuote", serialize_with = "as_b64")]
     pub pcr_quote: Vec<u8>,
+    /// Quote signature.
     #[serde(rename = "PcrSignature", serialize_with = "as_b64")]
     pub pcr_sig: Vec<u8>,
+    /// PCR indices included in the quote.
     #[serde(rename = "PcrSet")]
     pub pcr_set: Vec<u32>,
+    /// Individual PCR digest values.
     #[serde(rename = "PCRs")]
     pub pcrs: Vec<PcrEntry>,
+    /// Ephemeral encryption key public area.
     #[serde(rename = "EncKeyPub", serialize_with = "as_b64")]
     pub enc_key_pub: Vec<u8>,
+    /// Certify info for the ephemeral key (TPMS_ATTEST).
     #[serde(rename = "EncKeyCertifyInfo", serialize_with = "as_b64")]
     pub enc_key_certify_info: Vec<u8>,
+    /// Signature over the certify info.
     #[serde(rename = "EncKeyCertifyInfoSignature", serialize_with = "as_b64")]
     pub enc_key_certify_info_sig: Vec<u8>,
 }
 
+/// Full guest attestation request payload sent to the attestation provider.
 #[derive(Debug, Clone, Serialize)]
 pub struct GuestAttestationParameters {
+    /// Protocol version string.
     #[serde(rename = "AttestationProtocolVersion")]
     pub protocol_version: String,
+    /// OS type (base64-encoded in wire format).
     #[serde(rename = "OSType", serialize_with = "str_as_b64")]
     pub os_type: String,
+    /// OS distribution name (base64-encoded in wire format).
     #[serde(rename = "OSDistro", serialize_with = "str_as_b64")]
     pub os_distro: String,
+    /// OS major version number.
     #[serde(rename = "OSVersionMajor")]
     pub os_version_major: u32,
+    /// OS minor version number.
     #[serde(rename = "OSVersionMinor")]
     pub os_version_minor: u32,
+    /// OS build string (base64-encoded in wire format).
     #[serde(rename = "OSBuild", serialize_with = "str_as_b64")]
     pub os_build: String,
+    /// TCG event log bytes.
     #[serde(rename = "TcgLogs", serialize_with = "as_b64")]
     pub tcg_logs: Vec<u8>,
+    /// Client-supplied JSON payload (values are individually base64-encoded).
     #[serde(rename = "ClientPayload", serialize_with = "client_payload_b64")]
     pub client_payload: String,
+    /// TPM artifacts (quote, certs, keys).
     #[serde(rename = "TpmInfo")]
     pub tpm_info: TpmInfo,
+    /// Isolation and TEE evidence.
     #[serde(rename = "IsolationInfo")]
     pub isolation: IsolationInfo,
 }
 
 impl GuestAttestationParameters {
+    /// Serialize the parameters to a JSON string.
     pub fn to_json_string(&self) -> String {
         serde_json::to_string(self).unwrap_or_default()
     }
 }
 
+/// Result of a CVM guest attestation request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AttestCvmResult {
+    /// The raw JSON request sent to the provider.
     pub request_json: String,
+    /// Base64url-encoded request payload.
     pub encoded_request_b64url: String,
+    /// The returned attestation token (JWT), if available.
     pub token_b64url: Option<String>,
+    /// PCR indices used in the attestation.
     pub pcrs: Vec<u32>,
 }
 

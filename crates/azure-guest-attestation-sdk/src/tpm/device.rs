@@ -29,6 +29,7 @@ pub struct Tpm {
 
 /// Low-level TPM transport abstraction.
 pub trait RawTpm {
+    /// Send a raw TPM command buffer and return the full response.
     fn transmit_raw(&self, command: &[u8]) -> io::Result<Vec<u8>>;
 }
 
@@ -88,6 +89,7 @@ impl Tpm {
     pub fn is_reference(&self) -> bool {
         matches!(self.inner, Inner::Ref(_))
     }
+    /// Returns true if this TPM handle is backed by the in-process reference implementation.
     #[cfg(not(feature = "vtpm-tests"))]
     pub fn is_reference(&self) -> bool {
         false
@@ -406,6 +408,9 @@ mod vtpm {
     // Public (feature-gated) constructor for the in-process reference TPM so that
     // integration tests (which compile the library without #[cfg(test)]) can use it.
     impl Tpm {
+        /// Open an in-process reference TPM for integration testing.
+        ///
+        /// Only available when the `vtpm-tests` feature is enabled.
         pub fn open_reference() -> io::Result<Self> {
             // Ensure the singleton is initialized (panics on failure).
             let _ = SHARED_STATE.get_or_init(init_shared_state);
@@ -418,6 +423,7 @@ mod vtpm {
     // Retain backwards-compatible test-only name for existing unit tests.
     #[cfg(all(feature = "vtpm-tests", test))]
     impl Tpm {
+        /// Alias for [`Tpm::open_reference`] used by unit tests.
         pub fn open_reference_for_tests() -> io::Result<Self> {
             Self::open_reference()
         }

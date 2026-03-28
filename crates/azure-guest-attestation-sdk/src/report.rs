@@ -1,6 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+// Internal implementation — documentation deferred.
+#![allow(missing_docs)]
+
 //! The module helps preparing requests and parsing responses that are
 //! sent to and received from the IGVm agent runs on the host via GET
 //! `CVM` host request.

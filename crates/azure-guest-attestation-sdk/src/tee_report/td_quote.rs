@@ -201,6 +201,7 @@ pub struct TdQuoteBodyTdx10 {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TdQuoteBodyTdx15 {
+    /// TDX 1.0 base body fields.
     pub base: TdQuoteBodyTdx10,
     /// Array of TEE TCB SVNs (for TD preserving).
     pub tee_tcb_svn_2: [u8; 16],
@@ -233,11 +234,15 @@ pub struct ParsedTdQuote<'a> {
 /// Quote body variants returned by [`parse_td_quote`].
 #[derive(Debug)]
 pub enum TdQuoteBody<'a> {
+    /// TDX Module 1.0 body.
     Tdx10(TdQuoteBodyTdx10),
+    /// TDX Module 1.5 body.
     Tdx15(TdQuoteBodyTdx15),
     /// Unrecognised body type – returns the raw payload for external handling.
     Unknown {
+        /// Body type identifier.
         body_type: u16,
+        /// Raw payload bytes.
         bytes: &'a [u8],
     },
 }
@@ -249,8 +254,11 @@ pub enum TdQuoteParseError {
     Truncated(&'static str),
     /// The body size does not match the expected layout for the advertised type.
     InvalidBodySize {
+        /// Advertised body type identifier.
         body_type: u16,
+        /// Expected size for the body type.
         expected: usize,
+        /// Actual size found in the buffer.
         actual: usize,
     },
 }
@@ -348,7 +356,12 @@ pub enum TdQuoteEcdsaNestedCertification<'a> {
     /// PCK certificate chain (typically PEM encoded) with optional QE identity payload.
     PckCertChain(TdQuotePckCertChain<'a>),
     /// Other certification payload types are surfaced as raw bytes.
-    Raw { cert_key_type: u16, data: &'a [u8] },
+    Raw {
+        /// Certification key type identifier.
+        cert_key_type: u16,
+        /// Payload bytes.
+        data: &'a [u8],
+    },
 }
 
 /// Structured view of the PCK certificate chain payload (type 5).

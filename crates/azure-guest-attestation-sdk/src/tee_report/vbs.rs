@@ -9,6 +9,7 @@ use core::mem::size_of;
 /// Size of the [`VbsReport`].
 pub const VBS_REPORT_SIZE: usize = 0x230;
 
+/// Header for a VBS report package.
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct VbsReportPackageHeader {

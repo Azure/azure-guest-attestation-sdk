@@ -1,8 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+/// AMD SEV-SNP attestation report structures.
 pub mod snp;
 pub mod td_quote;
+/// Intel TDX attestation report structures.
 pub mod tdx;
 pub mod vbs;
 
