@@ -24,11 +24,10 @@
 //! # }
 //! ```
 
-use std::io;
-
+use crate::error::SdkError;
 use crate::report::{CvmAttestationReport, RuntimeClaims};
 use crate::tee_report::snp::SnpReport;
-use crate::tee_report::td_quote::{ParsedTdQuote, TdQuoteParseError};
+use crate::tee_report::td_quote::ParsedTdQuote;
 use crate::tee_report::tdx::TdReport;
 use crate::tee_report::vbs::VbsReport;
 
@@ -36,17 +35,14 @@ use crate::tee_report::vbs::VbsReport;
 ///
 /// The input must be at least [`SNP_REPORT_SIZE`](crate::tee_report::snp::SNP_REPORT_SIZE)
 /// bytes (0x4a0 = 1184 bytes).
-pub fn snp_report(bytes: &[u8]) -> io::Result<SnpReport> {
+pub fn snp_report(bytes: &[u8]) -> crate::error::Result<SnpReport> {
     use crate::tee_report::snp::SNP_REPORT_SIZE;
     if bytes.len() < SNP_REPORT_SIZE {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!(
-                "SNP report buffer too small: have {} need {}",
-                bytes.len(),
-                SNP_REPORT_SIZE,
-            ),
-        ));
+        return Err(SdkError::Parse(format!(
+            "SNP report buffer too small: have {} need {}",
+            bytes.len(),
+            SNP_REPORT_SIZE,
+        )));
     }
     // Safety: SnpReport is repr(C) with no padding invariants beyond alignment,
     // and we have verified the buffer is large enough.
@@ -63,17 +59,14 @@ pub fn snp_report_pretty(report: &SnpReport) -> String {
 ///
 /// The input must be at least [`TDX_REPORT_SIZE`](crate::tee_report::tdx::TDX_REPORT_SIZE)
 /// bytes (0x400 = 1024 bytes).
-pub fn tdx_report(bytes: &[u8]) -> io::Result<TdReport> {
+pub fn tdx_report(bytes: &[u8]) -> crate::error::Result<TdReport> {
     use crate::tee_report::tdx::TDX_REPORT_SIZE;
     if bytes.len() < TDX_REPORT_SIZE {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!(
-                "TDX report buffer too small: have {} need {}",
-                bytes.len(),
-                TDX_REPORT_SIZE,
-            ),
-        ));
+        return Err(SdkError::Parse(format!(
+            "TDX report buffer too small: have {} need {}",
+            bytes.len(),
+            TDX_REPORT_SIZE,
+        )));
     }
     let report: TdReport = unsafe { core::ptr::read_unaligned(bytes.as_ptr() as *const _) };
     Ok(report)
@@ -89,8 +82,8 @@ pub fn tdx_report_pretty(report: &TdReport) -> String {
 /// Supports all body types (TDX 1.0, TDX 1.5, legacy).
 /// Returns the fully parsed quote structure including header, body,
 /// signature, and certification data.
-pub fn td_quote(bytes: &[u8]) -> Result<ParsedTdQuote<'_>, TdQuoteParseError> {
-    crate::tee_report::td_quote::parse_td_quote(bytes)
+pub fn td_quote(bytes: &[u8]) -> crate::error::Result<ParsedTdQuote<'_>> {
+    Ok(crate::tee_report::td_quote::parse_td_quote(bytes)?)
 }
 
 /// Pretty-print a parsed TDX quote to a human-readable string.
@@ -102,17 +95,14 @@ pub fn td_quote_pretty(quote: &ParsedTdQuote) -> String {
 ///
 /// The input must be at least [`VBS_REPORT_SIZE`](crate::tee_report::vbs::VBS_REPORT_SIZE)
 /// bytes (0x230 = 560 bytes).
-pub fn vbs_report(bytes: &[u8]) -> io::Result<VbsReport> {
+pub fn vbs_report(bytes: &[u8]) -> crate::error::Result<VbsReport> {
     use crate::tee_report::vbs::VBS_REPORT_SIZE;
     if bytes.len() < VBS_REPORT_SIZE {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!(
-                "VBS report buffer too small: have {} need {}",
-                bytes.len(),
-                VBS_REPORT_SIZE,
-            ),
-        ));
+        return Err(SdkError::Parse(format!(
+            "VBS report buffer too small: have {} need {}",
+            bytes.len(),
+            VBS_REPORT_SIZE,
+        )));
     }
     let report: VbsReport = unsafe { core::ptr::read_unaligned(bytes.as_ptr() as *const _) };
     Ok(report)
@@ -128,8 +118,10 @@ pub fn vbs_report_pretty(report: &VbsReport) -> String {
 /// The input is the raw blob read from the CVM report NV index. It contains:
 /// - Fixed-size [`CvmAttestationReport`] header + TEE report
 /// - Optional variable-length JSON [`RuntimeClaims`] tail
-pub fn cvm_report(bytes: &[u8]) -> io::Result<(CvmAttestationReport, Option<RuntimeClaims>)> {
-    CvmAttestationReport::parse_with_runtime_claims(bytes)
+pub fn cvm_report(
+    bytes: &[u8],
+) -> crate::error::Result<(CvmAttestationReport, Option<RuntimeClaims>)> {
+    Ok(CvmAttestationReport::parse_with_runtime_claims(bytes)?)
 }
 
 /// Decoded claims from a JWT attestation token (header + payload).
@@ -147,28 +139,27 @@ pub struct TokenClaims {
 /// the header and payload. Use this to inspect MAA token claims offline.
 ///
 /// Returns `Ok(TokenClaims)` with the decoded header and payload JSON.
-pub fn attestation_token(token: &str) -> io::Result<TokenClaims> {
+pub fn attestation_token(token: &str) -> crate::error::Result<TokenClaims> {
     use base64::Engine;
     let parts: Vec<&str> = token.split('.').collect();
     if parts.len() < 2 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "JWT must have at least header.payload parts",
+        return Err(SdkError::Parse(
+            "JWT must have at least header.payload parts".into(),
         ));
     }
     let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
     let header_bytes = b64
         .decode(parts[0].as_bytes())
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("header base64: {e}")))?;
+        .map_err(|e| SdkError::Parse(format!("header base64: {e}")))?;
     let header: serde_json::Value = serde_json::from_slice(&header_bytes)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("header json: {e}")))?;
+        .map_err(|e| SdkError::Parse(format!("header json: {e}")))?;
 
     let payload_bytes = b64
         .decode(parts[1].as_bytes())
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("payload base64: {e}")))?;
+        .map_err(|e| SdkError::Parse(format!("payload base64: {e}")))?;
     let payload: serde_json::Value = serde_json::from_slice(&payload_bytes)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("payload json: {e}")))?;
+        .map_err(|e| SdkError::Parse(format!("payload json: {e}")))?;
 
     Ok(TokenClaims { header, payload })
 }
@@ -263,7 +254,7 @@ mod tests {
     fn snp_report_too_small() {
         let buf = vec![0u8; 100]; // much smaller than 1184
         let err = snp_report(&buf).unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert!(matches!(err, SdkError::Parse(_)));
         assert!(err.to_string().contains("SNP report buffer too small"));
     }
 
@@ -292,7 +283,7 @@ mod tests {
     fn tdx_report_too_small() {
         let buf = vec![0u8; 100];
         let err = tdx_report(&buf).unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert!(matches!(err, SdkError::Parse(_)));
         assert!(err.to_string().contains("TDX report buffer too small"));
     }
 
@@ -313,7 +304,7 @@ mod tests {
     fn vbs_report_too_small() {
         let buf = vec![0u8; 100];
         let err = vbs_report(&buf).unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert!(matches!(err, SdkError::Parse(_)));
         assert!(err.to_string().contains("VBS report buffer too small"));
     }
 
@@ -333,7 +324,7 @@ mod tests {
     fn cvm_report_too_short() {
         let buf = vec![0u8; 10]; // much too short
         let err = cvm_report(&buf).unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        assert!(matches!(err, SdkError::Io(_)));
     }
 
     #[test]

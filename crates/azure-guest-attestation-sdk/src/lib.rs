@@ -42,6 +42,7 @@
 
 // ---- Public API modules ---------------------------------------------------
 pub mod client;
+pub mod error;
 pub mod parse;
 
 // ---- Internal implementation modules (still public for advanced users) -----
@@ -57,6 +58,7 @@ pub use client::{
     CvmEvidenceOptions, DeviceEvidence, DeviceEvidenceOptions, DeviceType, Endorsement,
     EndorsementKind, Provider,
 };
+pub use error::SdkError;
 pub use parse::TokenClaims;
 
 use std::io::Write;
