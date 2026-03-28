@@ -10,10 +10,10 @@
 // Command structs now mirror the TPM wire format as (header, handles, parameters)
 // to make command construction and parsing more explicit.
 use bitfield_struct::bitfield;
-use std::cell::RefCell;
 use std::fmt;
 use std::io;
 use std::str::FromStr;
+use std::sync::OnceLock;
 
 pub const TPM_ST_NO_SESSIONS: u16 = 0x8001;
 pub const TPM_ST_SESSIONS: u16 = 0x8002;
@@ -1537,19 +1537,27 @@ impl TpmUnmarshal for u32 {
 //   * `inner` is never exposed mutably after construction, so cached bytes stay valid.
 //   * If mutation were ever added, the cache would need invalidation (not currently required).
 // Threading:
-//   * RefCell is !Sync; this wrapper is intended for single-threaded command construction paths.
-//     If Sync use is needed later, a different interior type (e.g. OnceLock) can be substituted.
-#[derive(Debug, Clone)]
+//   * OnceLock is Sync, so Tpm2b<T> is Send + Sync when T is.
+#[derive(Debug)]
 pub struct Tpm2b<T: TpmMarshal + Clone> {
     pub inner: T,
-    /* cached length-prefixed bytes */ cached: RefCell<Option<Vec<u8>>>,
+    /* cached length-prefixed bytes */ cached: OnceLock<Vec<u8>>,
+}
+
+impl<T: TpmMarshal + Clone> Clone for Tpm2b<T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            cached: OnceLock::new(),
+        }
+    }
 }
 
 impl<T: TpmMarshal + Clone> Tpm2b<T> {
     pub fn new(inner: T) -> Self {
         Self {
             inner,
-            cached: RefCell::new(None),
+            cached: OnceLock::new(),
         }
     }
 
@@ -1557,20 +1565,18 @@ impl<T: TpmMarshal + Clone> Tpm2b<T> {
     /// This clones the cached Vec if already built; otherwise it marshals `inner`,
     /// constructs the prefixed form, stores it, then returns it.
     pub fn bytes(&self) -> Vec<u8> {
-        // Fast path: already have cached length-prefixed bytes.
-        if let Some(c) = self.cached.borrow().as_ref() {
-            return c.clone();
-        }
-        // Marshal the inner structure (without size) into a temporary buffer.
-        let mut tmp = Vec::new();
-        self.inner.marshal(&mut tmp);
-        // Allocate the final buffer with exact capacity (2 bytes length + payload).
-        let mut full = Vec::with_capacity(2 + tmp.len());
-        (tmp.len() as u16).marshal(&mut full); // write length prefix
-        full.extend_from_slice(&tmp); // append payload
-                                      // Store for subsequent reuse.
-        *self.cached.borrow_mut() = Some(full.clone());
-        full
+        self.cached
+            .get_or_init(|| {
+                // Marshal the inner structure (without size) into a temporary buffer.
+                let mut tmp = Vec::new();
+                self.inner.marshal(&mut tmp);
+                // Allocate the final buffer with exact capacity (2 bytes length + payload).
+                let mut full = Vec::with_capacity(2 + tmp.len());
+                (tmp.len() as u16).marshal(&mut full); // write length prefix
+                full.extend_from_slice(&tmp); // append payload
+                full
+            })
+            .clone()
     }
 }
 
@@ -1847,7 +1853,7 @@ impl TpmUnmarshal for Tpm2bPublic {
         *c = start + sz;
         Ok(Tpm2b {
             inner,
-            cached: std::cell::RefCell::new(None),
+            cached: OnceLock::new(),
         })
     }
 }
@@ -2247,7 +2253,7 @@ impl TpmMarshal for NvPublic {
         // Spec: These bits are set by the TPM, not the caller, and presence (especially platformcreate)
         // changes which hierarchy can authorize NV undefine. Stripping ensures owner-defined indices behave.
         let masked_attributes = self.attributes & !(1u32 << 30) & !(1u32 << 29);
-        if std::env::var("CVM_TPM_DEBUG_NV").is_ok() {
+        if *crate::tpm::helpers::TPM_DEBUG_NV {
             if masked_attributes != self.attributes {
                 tracing::debug!(target: "guest_attest", orig = format_args!("0x{:08x}", self.attributes), masked = format_args!("0x{:08x}", masked_attributes), "NvPublic.marshal masking attributes");
             } else {

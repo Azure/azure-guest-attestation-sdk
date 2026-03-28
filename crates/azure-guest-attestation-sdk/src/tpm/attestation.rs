@@ -16,6 +16,7 @@ use crate::report::CvmAttestationReport;
 use crate::report::RuntimeClaims;
 use crate::tpm::commands::TpmCommandExt;
 use crate::tpm::helpers::hex_fmt;
+use crate::tpm::helpers::{TPM_DEBUG, TPM_DEBUG_NV};
 
 /// Persistent handle for the Attestation Key (AK) public object.
 pub const AK_PERSISTENT_HANDLE: u32 = 0x81000003;
@@ -23,12 +24,28 @@ pub const AK_PERSISTENT_HANDLE: u32 = 0x81000003;
 /// Persistent handle for ECC signing key
 pub const ECC_SIGNING_KEY_PERSISTENT_HANDLE: u32 = 0x81000010;
 
-type EphemeralKeyArtifacts = (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>);
+/// Artifacts produced by creating an ephemeral RSA primary key.
+///
+/// The key is created as a TPM2 primary under the owner hierarchy with
+/// a PCR-based authorization policy.  It is certified by the persistent
+/// AK so the attestation service can trust the binding.
+#[derive(Debug, Clone)]
+pub struct EphemeralKey {
+    /// TPM2B_PUBLIC of the ephemeral key.
+    pub public: Vec<u8>,
+    /// Transient handle (big-endian u32) for the key. Callers must flush
+    /// this handle when done, or recreate it later from the same PCRs.
+    pub handle: u32,
+    /// TPMS_ATTEST from TPM2_Certify (certifying the ephemeral key with the AK).
+    pub certify_info: Vec<u8>,
+    /// Signature over `certify_info` from the AK.
+    pub certify_sig: Vec<u8>,
+}
 
 /// Create an ECC P-256 signing key and persist it to TPM NV space.
 /// Returns the public key bytes.
 pub fn create_and_persist_ecc_signing_key(tpm: &Tpm) -> io::Result<Vec<u8>> {
-    let debug = std::env::var("CVM_TPM_DEBUG").is_ok();
+    let debug = *TPM_DEBUG;
 
     // Check if key already exists at the persistent handle
     if let Ok(pub_bytes) = tpm.read_public(ECC_SIGNING_KEY_PERSISTENT_HANDLE) {
@@ -296,7 +313,7 @@ pub fn get_tee_report_and_type(
 }
 
 fn define_user_data_index(tpm: &Tpm) -> io::Result<()> {
-    let debug = std::env::var("CVM_TPM_DEBUG_NV").is_ok();
+    let debug = *TPM_DEBUG_NV;
 
     let attr_bits = TpmaNvBits::new()
         .with_nv_ownerwrite(true)
@@ -353,7 +370,7 @@ fn pad_user_data(input: &[u8]) -> [u8; 64] {
 /// Produce a PCR quote over the supplied PCR indices (0-23) using a transient
 /// attestation key. Returns (attestation, signature) byte blobs.
 pub fn get_pcr_quote(tpm: &Tpm, pcrs: &[u32]) -> io::Result<(Vec<u8>, Vec<u8>)> {
-    let debug = std::env::var("CVM_TPM_DEBUG").is_ok();
+    let debug = *TPM_DEBUG;
     if debug {
         tracing::debug!(target: "guest_attest", ?pcrs, "get_pcr_quote start");
     }
@@ -381,29 +398,33 @@ pub fn get_pcr_quote(tpm: &Tpm, pcrs: &[u32]) -> io::Result<(Vec<u8>, Vec<u8>)> 
 }
 
 /// Create a non-restricted (unrestricted) RSA 2048 key suitable for ephemeral
-/// use (signing + decrypt) and return (public_area, handle_be, certify_info_attest, certify_signature).
-/// The key is certified by the persistent AK (if available) using TPM2_Certify so the service
-/// can trust the ephemeral key binding. If certification fails we still return the key without info.
-pub fn get_ephemeral_key(tpm: &Tpm, pcrs: &[u32]) -> io::Result<EphemeralKeyArtifacts> {
+/// use (signing + decrypt) and return an [`EphemeralKey`] with the public area,
+/// handle, and AK certification artifacts.
+///
+/// The key is certified by the persistent AK using TPM2_Certify so the
+/// attestation service can trust the ephemeral key binding.
+pub fn get_ephemeral_key(tpm: &Tpm, pcrs: &[u32]) -> io::Result<EphemeralKey> {
     let policy = tpm.compute_pcr_policy_digest(pcrs)?;
     tracing::debug!(target: "guest_attest", ?policy, "PCR policy digest");
     let template = rsa_unrestricted_sign_decrypt_public_with_policy(policy);
     let cp = tpm.create_primary(Hierarchy::Owner, template, pcrs)?;
 
-    let mut handle_bytes = Vec::with_capacity(4);
-    handle_bytes.extend_from_slice(&cp.handle.to_be_bytes());
     tracing::debug!(target: "guest_attest", handle = format_args!("0x{:08x}", cp.handle), ?pcrs, "Created ephemeral primary key");
 
     let (cert_info, cert_sig) = match tpm.certify_with_key(cp.handle, AK_PERSISTENT_HANDLE) {
         Ok(v) => v,
         Err(e) => {
             tracing::debug!(target: "guest_attest", handle = format_args!("0x{:08x}", cp.handle), error = %e, "TPM2_Certify failed for object");
-
             return Err(e);
         }
     };
 
-    Ok((cp.public, handle_bytes, cert_info, cert_sig))
+    Ok(EphemeralKey {
+        public: cp.public,
+        handle: cp.handle,
+        certify_info: cert_info,
+        certify_sig: cert_sig,
+    })
 }
 
 /// Decrypt data with an existing ephemeral RSA key (created via `get_ephemeral_key`).

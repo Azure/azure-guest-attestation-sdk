@@ -11,6 +11,18 @@ use crate::tpm::types::TPM_ST_NO_SESSIONS;
 use crate::tpm::types::TPM_ST_SESSIONS;
 use std::fmt;
 use std::io;
+use std::sync::LazyLock;
+
+/// Whether the `CVM_TPM_DEBUG` environment variable is set.
+///
+/// Read once on first access; avoids allocating a `String` on every TPM command.
+pub static TPM_DEBUG: LazyLock<bool> = LazyLock::new(|| std::env::var("CVM_TPM_DEBUG").is_ok());
+
+/// Whether the `CVM_TPM_DEBUG_NV` environment variable is set.
+///
+/// Read once on first access; avoids allocating a `String` on every NV operation.
+pub static TPM_DEBUG_NV: LazyLock<bool> =
+    LazyLock::new(|| std::env::var("CVM_TPM_DEBUG_NV").is_ok());
 
 /// Structured TPM error carrying the raw response code (rc), decoded description,
 /// and optional originating command code.

@@ -337,22 +337,13 @@ impl AttestationClient {
         let ak_pub = attestation::get_ak_pub(&self.tpm)?;
         let (quote, sig) = attestation::get_pcr_quote(&self.tpm, &pcrs)?;
         let pcr_values = attestation::get_pcr_values(&self.tpm, &pcrs)?;
-        let (enc_key_pub, handle_bytes, enc_key_certify_info, enc_key_certify_info_sig) =
-            attestation::get_ephemeral_key(&self.tpm, &pcrs)?;
+        let ek = attestation::get_ephemeral_key(&self.tpm, &pcrs)?;
 
         // The ephemeral key is a deterministic TPM2 primary — it can be
         // recreated from the same PCRs at any time.  Flush the transient
         // handle now to free TPM object slots; decrypt_token() will
         // recreate it when needed.
-        if handle_bytes.len() >= 4 {
-            let h = u32::from_be_bytes([
-                handle_bytes[0],
-                handle_bytes[1],
-                handle_bytes[2],
-                handle_bytes[3],
-            ]);
-            let _ = self.tpm.flush_context(h);
-        }
+        let _ = self.tpm.flush_context(ek.handle);
 
         let pcr_set: Vec<u32> = pcr_values.iter().map(|(i, _)| *i).collect();
         let pcrs_struct: Vec<PcrEntry> = pcr_values
@@ -371,9 +362,9 @@ impl AttestationClient {
                 pcr_sig: sig,
                 pcr_set,
                 pcrs: pcrs_struct,
-                enc_key_pub,
-                enc_key_certify_info,
-                enc_key_certify_info_sig,
+                enc_key_pub: ek.public,
+                enc_key_certify_info: ek.certify_info,
+                enc_key_certify_info_sig: ek.certify_sig,
             },
             pcrs,
         })
@@ -608,16 +599,8 @@ impl AttestationClient {
     /// Recreate the deterministic ephemeral RSA primary key from PCRs and
     /// return its transient handle.  Caller **must** flush the handle when done.
     fn recreate_ephemeral_key(&self, pcrs: &[u32]) -> crate::error::Result<u32> {
-        let (_, handle_bytes, _, _) = attestation::get_ephemeral_key(&self.tpm, pcrs)?;
-        if handle_bytes.len() < 4 {
-            return Err(SdkError::Parse("ephemeral key handle too short".into()));
-        }
-        Ok(u32::from_be_bytes([
-            handle_bytes[0],
-            handle_bytes[1],
-            handle_bytes[2],
-            handle_bytes[3],
-        ]))
+        let ek = attestation::get_ephemeral_key(&self.tpm, pcrs)?;
+        Ok(ek.handle)
     }
 }
 

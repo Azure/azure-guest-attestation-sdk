@@ -32,6 +32,7 @@ use crate::tpm::device::RawTpm;
 use crate::tpm::helpers::build_command_custom_sessions;
 use crate::tpm::helpers::hex_fmt;
 use crate::tpm::helpers::SessionEntry;
+use crate::tpm::helpers::TPM_DEBUG;
 use crate::tpm::helpers::{
     build_command_no_sessions, build_command_pw_sessions, parse_tpm_rc_with_cmd,
     tpm_rc_from_io_error,
@@ -316,7 +317,7 @@ impl<T: RawTpm> TpmCommandExt for T {
         public_template: Tpm2bPublic,
         pcrs: &[u32],
     ) -> io::Result<CreatedPrimary> {
-        let debug = std::env::var("CVM_TPM_DEBUG").is_ok();
+        let debug = *TPM_DEBUG;
 
         let parameters = CreatePrimaryCommandParameters {
             in_sensitive: empty_sensitive_create(),
@@ -456,7 +457,7 @@ impl<T: RawTpm> TpmCommandExt for T {
         object_handle: u32,
         sign_handle: u32,
     ) -> io::Result<(Vec<u8>, Vec<u8>)> {
-        let debug = std::env::var("CVM_TPM_DEBUG").is_ok();
+        let debug = *TPM_DEBUG;
 
         let parameters = CertifyCommandParameters {
             qualifying_data: Tpm2bBytes(Vec::new()),
