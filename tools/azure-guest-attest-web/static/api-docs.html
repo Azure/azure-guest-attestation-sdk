@@ -257,6 +257,9 @@
                 <li><span class="m mp">POST</span> <a href="#ep-guest-attest">/api/guest-attest</a></li>
                 <li><span class="m mp">POST</span> <a href="#ep-tee-attest">/api/tee-attest</a></li>
                 <li><span class="m mp">POST</span> <a href="#ep-parse-token">/api/parse-token</a></li>
+                <li><span class="m mg">GET</span>  <a href="#ep-endorsement-mrtds">/api/endorsement/mrtds</a></li>
+                <li><span class="m mg">GET</span>  <a href="#ep-endorsement-tdx">/api/endorsement/tdx/:mrtd</a></li>
+                <li><span class="m mg">GET</span>  <a href="#ep-endorsement-platform">/api/endorsement/from-platform</a></li>
             </ul>
         </div>
 
@@ -685,6 +688,88 @@ Invoke-RestMethod -Method Post -Uri http://localhost:8080/api/guest-attest `
                     <tr><th>Field</th><th>Type</th><th>Description</th></tr>
                     <tr><td>header</td><td><span class="type-badge">object</span></td><td>JWT header (alg, kid, typ, …)</td></tr>
                     <tr><td>payload</td><td><span class="type-badge">object</span></td><td>JWT payload / claims</td></tr>
+                </table>
+            </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <div class="section-title">TDX Endorsement (THIM)</div>
+
+        <div class="endpoint" id="ep-endorsement-mrtds">
+            <div class="endpoint-header" onclick="toggle(this)">
+                <span class="method method-get">GET</span>
+                <span class="endpoint-path">/api/endorsement/mrtds</span>
+                <span class="endpoint-desc">List known TDX MRTDs from Azure THIM</span>
+            </div>
+            <div class="endpoint-body">
+                <p>Queries the Azure Trusted Hardware Identity Management (THIM) service for all known endorsed TDX MRTD values (SHA-384 measurement hashes).</p>
+                <h4>Query Parameters</h4>
+                <table class="params-table">
+                    <tr><th>Param</th><th>Type</th><th>Description</th></tr>
+                    <tr><td>region</td><td><span class="type-badge">string</span></td><td>Azure region (default: <code>westus</code>)</td></tr>
+                </table>
+<pre class="curl">curl -s http://localhost:8080/api/endorsement/mrtds | jq .
+curl -s http://localhost:8080/api/endorsement/mrtds?region=eastus | jq .</pre>
+                <h4>Response Fields</h4>
+                <table class="params-table">
+                    <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+                    <tr><td>count</td><td><span class="type-badge">number</span></td><td>Number of MRTDs returned</td></tr>
+                    <tr><td>mrtds</td><td><span class="type-badge">string[]</span></td><td>Array of uppercase hex MRTD values (96 chars each)</td></tr>
+                </table>
+            </div>
+        </div>
+
+        <div class="endpoint" id="ep-endorsement-tdx">
+            <div class="endpoint-header" onclick="toggle(this)">
+                <span class="method method-get">GET</span>
+                <span class="endpoint-path">/api/endorsement/tdx/:mrtd</span>
+                <span class="endpoint-desc">Fetch TDX endorsement (CoRIM) for a specific MRTD</span>
+            </div>
+            <div class="endpoint-body">
+                <p>Fetches the COSE/CoRIM endorsement binary for a specific MRTD value from THIM. The response includes the base64-encoded endorsement payload.</p>
+                <h4>Path Parameters</h4>
+                <table class="params-table">
+                    <tr><th>Param</th><th>Type</th><th>Description</th></tr>
+                    <tr><td>mrtd</td><td><span class="type-badge">string</span></td><td>96-character uppercase hex MRTD value</td></tr>
+                </table>
+                <h4>Query Parameters</h4>
+                <table class="params-table">
+                    <tr><th>Param</th><th>Type</th><th>Description</th></tr>
+                    <tr><td>region</td><td><span class="type-badge">string</span></td><td>Azure region (default: <code>westus</code>)</td></tr>
+                </table>
+<pre class="curl">curl -s http://localhost:8080/api/endorsement/tdx/6954FB6A...E37E8 | jq .</pre>
+                <h4>Response Fields</h4>
+                <table class="params-table">
+                    <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+                    <tr><td>mrtd</td><td><span class="type-badge">string</span></td><td>The MRTD value (uppercase hex)</td></tr>
+                    <tr><td>content_type</td><td><span class="type-badge">string</span></td><td>Content type from THIM (e.g. <code>application/cose</code>)</td></tr>
+                    <tr><td>size_bytes</td><td><span class="type-badge">number</span></td><td>Size of the endorsement payload</td></tr>
+                    <tr><td>base64</td><td><span class="type-badge">string</span></td><td>Base64-encoded endorsement binary</td></tr>
+                </table>
+            </div>
+        </div>
+
+        <div class="endpoint" id="ep-endorsement-platform">
+            <div class="endpoint-header" onclick="toggle(this)">
+                <span class="method method-get">GET</span>
+                <span class="endpoint-path">/api/endorsement/from-platform</span>
+                <span class="endpoint-desc">Auto-detect MRTD from platform TDX report</span>
+            </div>
+            <div class="endpoint-body">
+                <p>Reads the TDX report from the platform TPM, extracts the <code>mr_td</code> field, and fetches the corresponding endorsement from THIM. Only works on TDX CVMs.</p>
+                <h4>Query Parameters</h4>
+                <table class="params-table">
+                    <tr><th>Param</th><th>Type</th><th>Description</th></tr>
+                    <tr><td>region</td><td><span class="type-badge">string</span></td><td>Azure region (default: <code>westus</code>)</td></tr>
+                </table>
+<pre class="curl">curl -s http://localhost:8080/api/endorsement/from-platform | jq .</pre>
+                <h4>Response Fields</h4>
+                <table class="params-table">
+                    <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+                    <tr><td>mrtd</td><td><span class="type-badge">string</span></td><td>Extracted MRTD from the platform report</td></tr>
+                    <tr><td>content_type</td><td><span class="type-badge">string</span></td><td>Content type from THIM</td></tr>
+                    <tr><td>size_bytes</td><td><span class="type-badge">number</span></td><td>Size of the endorsement payload</td></tr>
+                    <tr><td>base64</td><td><span class="type-badge">string</span></td><td>Base64-encoded endorsement binary</td></tr>
                 </table>
             </div>
         </div>

@@ -38,6 +38,10 @@
                 <button class="nav-btn" data-panel="tee-attest">TEE Attest</button>
             </div>
             <div class="nav-section">
+                <h3>Endorsement</h3>
+                <button class="nav-btn" data-panel="endorsement">TDX Endorsement</button>
+            </div>
+            <div class="nav-section">
                 <h3>Tools</h3>
                 <button class="nav-btn" data-panel="parse-token">Parse Token</button>
             </div>
@@ -201,6 +205,30 @@
                     <button class="btn btn-primary" onclick="runTeeAttest()">Attest</button>
                 </div>
                 <div class="result" id="result-tee-attest"></div>
+            </div>
+
+            <!-- TDX Endorsement -->
+            <div class="panel" id="panel-endorsement">
+                <h2>TDX Endorsement (THIM)</h2>
+                <p class="description">Query TDX endorsement data from Azure Trusted Hardware Identity Management. Supports listing known MRTDs, fetching endorsement by MRTD, or auto-detecting from the platform TDX report.</p>
+                <div class="form-group">
+                    <label for="endorsement-region">Azure Region</label>
+                    <input type="text" id="endorsement-region" value="westus" placeholder="westus">
+                    <small>THIM region (e.g. westus, eastus, westeurope)</small>
+                </div>
+                <div class="actions">
+                    <button class="btn btn-primary" onclick="runListMrtds()">List MRTDs</button>
+                    <button class="btn btn-primary" onclick="runEndorsementFromPlatform()">From Platform</button>
+                </div>
+                <div class="form-group" style="margin-top: 1rem">
+                    <label for="endorsement-mrtd">MRTD (hex)</label>
+                    <input type="text" id="endorsement-mrtd" placeholder="Paste a 96-char hex MRTD value">
+                    <small>SHA-384 measurement — select from the list above or paste manually</small>
+                </div>
+                <div class="actions">
+                    <button class="btn btn-primary" onclick="runGetEndorsement()">Get Endorsement</button>
+                </div>
+                <div class="result" id="result-endorsement"></div>
             </div>
 
             <!-- Parse Token -->

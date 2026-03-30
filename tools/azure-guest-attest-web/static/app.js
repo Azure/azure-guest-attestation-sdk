@@ -449,3 +449,66 @@ async function runParseToken() {
         showError('result-parse-token', e.message);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Endorsement handlers
+// ---------------------------------------------------------------------------
+
+function endorsementRegionParam() {
+    const region = document.getElementById('endorsement-region').value.trim();
+    return region ? '?region=' + encodeURIComponent(region) : '';
+}
+
+async function runListMrtds() {
+    showLoading('result-endorsement');
+    try {
+        const data = await apiGet('/api/endorsement/mrtds' + endorsementRegionParam());
+        if (data.success && data.data && Array.isArray(data.data.mrtds)) {
+            // Render clickable MRTD list
+            const now = new Date().toLocaleTimeString();
+            const el = document.getElementById('result-endorsement');
+            let html = '<div class="result-card"><div class="result-header">';
+            html += '<div class="result-status success"><span class="status-dot success"></span> Success</div>';
+            html += '<span class="result-time">' + now + '</span></div>';
+            html += '<div class="result-body">';
+            html += '<p><strong>' + data.data.count + '</strong> known MRTDs (click to select):</p>';
+            html += '<div style="max-height:400px;overflow-y:auto">';
+            for (const m of data.data.mrtds) {
+                html += '<div class="mrtd-item" style="font-family:monospace;font-size:0.82rem;padding:0.3rem 0.5rem;cursor:pointer;border-bottom:1px solid var(--border)" '
+                    + 'onclick="document.getElementById(\'endorsement-mrtd\').value=\'' + escapeHtml(m) + '\';this.style.background=\'var(--accent-light)\'" '
+                    + 'title="Click to populate MRTD field">' + escapeHtml(m) + '</div>';
+            }
+            html += '</div></div></div>';
+            el.innerHTML = html;
+        } else {
+            showResult('result-endorsement', data);
+        }
+    } catch (e) {
+        showError('result-endorsement', e.message);
+    }
+}
+
+async function runGetEndorsement() {
+    const mrtd = document.getElementById('endorsement-mrtd').value.trim();
+    if (!mrtd) {
+        showError('result-endorsement', 'Please enter an MRTD value or click one from the list above.');
+        return;
+    }
+    showLoading('result-endorsement');
+    try {
+        const data = await apiGet('/api/endorsement/tdx/' + encodeURIComponent(mrtd) + endorsementRegionParam());
+        showResult('result-endorsement', data);
+    } catch (e) {
+        showError('result-endorsement', e.message);
+    }
+}
+
+async function runEndorsementFromPlatform() {
+    showLoading('result-endorsement');
+    try {
+        const data = await apiGet('/api/endorsement/from-platform' + endorsementRegionParam());
+        showResult('result-endorsement', data);
+    } catch (e) {
+        showError('result-endorsement', e.message);
+    }
+}
