@@ -1,12 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-// Internal implementation — documentation deferred.
-#![allow(missing_docs)]
-
-//! The module helps preparing requests and parsing responses that are
-//! sent to and received from the IGVm agent runs on the host via GET
-//! `CVM` host request.
+//! CVM attestation report structures.
+//!
+//! This module defines the C-style structures used to parse the raw blob
+//! read from the CVM report NV index.  The blob contains a fixed-size
+//! header + TEE report followed by optional variable-length JSON
+//! [`RuntimeClaims`].
 
 use crate::tee_report; // Provides vbs/snp/tdx report size constants
 use core::mem::size_of;
@@ -20,8 +20,11 @@ const ATTESTATION_SIGNATURE: u32 = 0x414c4348; // 'HCLA'
 /// Currently it's the size of a SNP report.
 const ATTESTATION_REPORT_SIZE_MAX: usize = SNP_VM_REPORT_SIZE;
 
+/// Size of the VBS VM attestation report (bytes).
 pub const VBS_VM_REPORT_SIZE: usize = tee_report::vbs::VBS_REPORT_SIZE;
+/// Size of the AMD SEV-SNP VM attestation report (bytes).
 pub const SNP_VM_REPORT_SIZE: usize = tee_report::snp::SNP_REPORT_SIZE;
+/// Size of the Intel TDX VM attestation report (bytes).
 pub const TDX_VM_REPORT_SIZE: usize = tee_report::tdx::TDX_REPORT_SIZE;
 /// No TEE attestation report for TVM
 pub const TVM_REPORT_SIZE: usize = 0;
@@ -44,31 +47,47 @@ pub struct CvmAttestationReport {
     // in the `report_data` or equivalent field of the TEE attestation report.
 }
 
+/// CVM TEE report type detected from the attestation report header.
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum CvmReportType {
+    /// Invalid or unrecognised report type.
     Invalid = 0,
+    /// VBS (Virtualization-Based Security) report.
     VbsVmReport = 1,
+    /// AMD SEV-SNP attestation report.
     SnpVmReport = 2,
+    /// Trusted Launch VM (no hardware TEE report).
     TvmReport = 3,
+    /// Intel TDX attestation report.
     TdxVmReport = 4,
 }
 
+/// Request type stored in the CVM attestation report header.
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum CvmRequestType {
+    /// Invalid or unrecognised request type.
     Invalid = 0,
+    /// Key release request.
     KeyReleaseRequest = 1,
+    /// Attestation key certificate request.
     AkCertRequest = 2,
+    /// Wrapped key request.
     WrappedKeyRequest = 3,
 }
 
+/// Hash algorithm used for the `report_data` field.
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ReportDataHashType {
+    /// Invalid or unrecognised hash type.
     Invalid = 0,
+    /// SHA-256.
     Sha256 = 1,
+    /// SHA-384.
     Sha384 = 2,
+    /// SHA-512.
     Sha512 = 3,
 }
 
@@ -123,6 +142,7 @@ pub struct RuntimeClaimsHeader {
 }
 
 impl RuntimeClaimsHeader {
+    /// Create a new `RuntimeClaimsHeader`.
     pub fn new(
         data_size: u32,
         report_type: CvmReportType,
@@ -139,45 +159,64 @@ impl RuntimeClaimsHeader {
     }
 }
 
-/// Definition of the runt-time claims, which will be appended to the
-/// `CvmRequest` in raw bytes.
+/// Variable-length runtime claims appended to the CVM attestation report.
+///
+/// Serialized as a JSON string whose hash is captured in the TEE report's
+/// `report_data` field.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct RuntimeClaims {
+    /// RSA public keys (JWK format) associated with the VM.
     pub keys: Vec<RsaJwk>,
+    /// VM configuration metadata.
     pub vm_configuration: AttestationVmConfig,
+    /// Optional user-supplied data.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub user_data: String,
 }
 
+/// RSA public key in JWK (JSON Web Key) format.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RsaJwk {
+    /// Key ID.
     pub kid: String,
+    /// Permitted key operations (e.g. `["sign"]`).
     pub key_ops: Vec<String>,
+    /// Key type (always `"RSA"`).
     pub kty: String,
-    /// Base64url-encoded RSA public exponent
+    /// Base64url-encoded RSA public exponent.
     pub e: String,
-    /// Base64url-encoded RSA modulus
+    /// Base64url-encoded RSA modulus.
     pub n: String,
 }
 
+/// VM configuration metadata included in runtime claims.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct AttestationVmConfig {
+    /// Current UNIX timestamp (seconds) at attestation time, if known.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_time: Option<i64>,
+    /// Thumbprint of the root certificate.
     pub root_cert_thumbprint: String,
+    /// Whether the serial console is enabled.
     pub console_enabled: bool,
+    /// Whether Secure Boot is enabled.
     pub secure_boot: bool,
+    /// Whether the vTPM is enabled.
     pub tpm_enabled: bool,
+    /// Whether the vTPM state is persisted.
     pub tpm_persisted: bool,
+    /// Whether filtered vPCI devices are allowed.
     pub filtered_vpci_devices_allowed: bool,
+    /// Unique identifier for this VM instance.
     #[serde(rename = "vmUniqueId")]
     pub vm_unique_id: String,
 }
 
-// Helper to parse appended RuntimeClaims JSON after the fixed-size report header+body.
 impl CvmAttestationReport {
+    /// Parse a raw CVM report blob into the fixed-size header/body and optional
+    /// variable-length [`RuntimeClaims`] JSON tail.
     pub fn parse_with_runtime_claims(full: &[u8]) -> io::Result<(Self, Option<RuntimeClaims>)> {
         if full.len() < size_of::<CvmAttestationReport>() {
             return Err(io::Error::new(
@@ -210,6 +249,9 @@ impl CvmAttestationReport {
         Ok((report, claims))
     }
 
+    /// Extract the raw runtime claims bytes from the full report blob.
+    ///
+    /// Returns an empty `Vec` when `variable_data_size` is zero.
     pub fn get_runtime_claims_raw_bytes(&self, full: &[u8]) -> io::Result<Vec<u8>> {
         if full.len() < size_of::<CvmAttestationReport>() {
             return Err(io::Error::new(
@@ -218,7 +260,11 @@ impl CvmAttestationReport {
             ));
         }
         let start = size_of::<CvmAttestationReport>();
-        let end = start + self.runtime_claims_header.variable_data_size as usize;
+        let end = start
+            .checked_add(self.runtime_claims_header.variable_data_size as usize)
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "variable_data_size overflow")
+            })?;
         if full.len() < end {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,

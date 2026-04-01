@@ -478,7 +478,7 @@ mod tests {
     #[cfg(feature = "vtpm-tests")]
     use crate::tpm::device::Tpm;
 
-    #[cfg(all(feature = "vtpm-tests", test))]
+    #[cfg(feature = "vtpm-tests")]
     #[test]
     fn vtpm_user_data_index_write_and_read() {
         let tpm = Tpm::open_reference().expect("failed to open reference TPM");
