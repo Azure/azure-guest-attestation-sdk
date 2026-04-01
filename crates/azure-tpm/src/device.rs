@@ -21,8 +21,6 @@ use vtpm::RefTpm;
 /// Windows notes:
 ///   Uses TBS (TPM Base Services). Link with tbs.dll (implicit).
 ///   Requires the tbs development headers at build time only for reference; here we redefine what is needed.
-///
-/// This is a minimal example; production code should add timeouts, command size limits, and stronger error mapping.
 pub struct Tpm {
     inner: Inner,
 }
@@ -63,13 +61,41 @@ impl Tpm {
         }
     }
 
+    /// Maximum command buffer size to send to the TPM.
+    /// The TPM 2.0 spec defines a minimum buffer size of 4096 bytes for
+    /// commands; 64 KiB is generous and guards against accidental over-sized
+    /// buffers being sent to the kernel driver or TBS.
+    const MAX_COMMAND_SIZE: usize = 64 * 1024;
+
     /// Transmit a TPM command buffer and return the full response.
     /// Command must already contain a valid TPM header with correct length.
     pub fn transmit(&self, command: &[u8]) -> io::Result<Vec<u8>> {
         if command.len() < 10 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "Command too short",
+                "Command too short (need at least 10-byte header)",
+            ));
+        }
+        // Validate that the header's declared size matches the buffer length.
+        let declared =
+            u32::from_be_bytes([command[2], command[3], command[4], command[5]]) as usize;
+        if declared != command.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "Command header declares {declared} bytes but buffer is {} bytes",
+                    command.len()
+                ),
+            ));
+        }
+        if command.len() > Self::MAX_COMMAND_SIZE {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "Command size {} exceeds maximum {}",
+                    command.len(),
+                    Self::MAX_COMMAND_SIZE
+                ),
             ));
         }
         match &self.inner {
@@ -453,6 +479,35 @@ mod tests {
     #[test]
     fn maybe_open() {
         let _ = Tpm::open(); // Ignore result; on CI without TPM it will error.
+    }
+
+    #[test]
+    fn transmit_rejects_short_command() {
+        // A valid TPM instance is needed to call transmit; however, validation happens
+        // before dispatching to the inner transport.
+        let tpm = match test_tpm_instance() {
+            Some(t) => t,
+            None => return, // Skip — no TPM available
+        };
+        let err = tpm.transmit(&[0x80, 0x01]).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn transmit_rejects_header_size_mismatch() {
+        let tpm = match test_tpm_instance() {
+            Some(t) => t,
+            None => return,
+        };
+        // Header says 99 bytes but buffer is only 10
+        let cmd = [
+            0x80, 0x01, // tag
+            0x00, 0x00, 0x00, 0x63, // size = 99 (wrong)
+            0x00, 0x00, 0x01, 0x7A, // command code
+        ];
+        let err = tpm.transmit(&cmd).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert!(err.to_string().contains("99"));
     }
 
     // TPM2_GetCapability (0x0000017A) requesting TPM properties starting at TPM2_PT_FIXED (0x00000100)

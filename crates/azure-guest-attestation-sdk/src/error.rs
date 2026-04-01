@@ -9,7 +9,7 @@
 //! distinguish between TPM failures, network issues, parsing problems, etc.
 
 use crate::tee_report::td_quote::TdQuoteParseError;
-use crate::tpm::helpers::TpmError;
+use crate::tpm::TpmError;
 use std::fmt;
 use std::io;
 
@@ -28,7 +28,7 @@ use std::io;
 /// let client = AttestationClient::new()?;
 /// match client.attest_guest(Provider::maa("https://..."), None) {
 ///     Ok(result) => println!("Token: {}", result.token.unwrap_or_default()),
-///     Err(SdkError::Tpm(e)) => eprintln!("TPM error (RC 0x{:08x}): {e}", e.rc),
+///     Err(SdkError::Tpm(e)) => eprintln!("TPM error: {e}"),
 ///     Err(SdkError::Network { status, body, .. }) => {
 ///         eprintln!("HTTP {}: {body}", status.unwrap_or(0));
 ///     }
@@ -166,16 +166,16 @@ mod tests {
 
     #[test]
     fn tpm_error_unwrapped_from_io() {
-        let tpm_err = TpmError {
+        let tpm_err = TpmError::Tpm {
             rc: 0x100,
-            decoded: "auth fail".into(),
+            description: "auth fail".into(),
             command: None,
         };
         let io_err = io::Error::other(tpm_err);
         let sdk_err: SdkError = io_err.into();
         assert!(matches!(sdk_err, SdkError::Tpm(_)));
         if let SdkError::Tpm(e) = &sdk_err {
-            assert_eq!(e.rc, 0x100);
+            assert_eq!(e.tpm_rc_code(), Some(0x100));
         }
     }
 
