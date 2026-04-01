@@ -53,6 +53,8 @@
 pub mod commands;
 /// Platform-agnostic TPM device communication.
 pub mod device;
+/// Dedicated error types for TPM 2.0 operations.
+pub mod error;
 /// TCG event log parsing.
 pub mod event_log;
 /// Internal utilities for command building.
@@ -62,4 +64,5 @@ pub mod types;
 
 pub use commands::TpmCommandExt;
 pub use device::{RawTpm, Tpm};
+pub use error::{TpmError, TpmResult};
 pub use types::TpmCommandCode;

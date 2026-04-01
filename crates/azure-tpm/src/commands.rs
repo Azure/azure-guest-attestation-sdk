@@ -855,80 +855,17 @@ impl<T: RawTpm> TpmCommandExt for T {
         let resp = self.transmit_raw(&cmd)?;
         parse_tpm_rc_with_cmd(&resp, TpmCommandCode::CreatePrimary)?;
 
-        // Response layout (with sessions): header(10) + handle(4) + paramSize(4) + outPublic(2+N) + ...
-        // Minimum: 10 (header) + 4 (handle) + 4 (paramSize) + 2 (outPublic size) = 20
-        if resp.len() < 20 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                format!(
-                    "CreatePrimary ECC response too short: {} bytes (need >= 20)",
-                    resp.len()
-                ),
-            ));
-        }
-
-        // Parse response header (also validates return_code == 0)
-        let (header, mut cursor) = crate::types::TpmResponseHeader::parse(&resp)?;
-        if header.return_code != 0 {
-            return Err(io::Error::other(format!(
-                "CreatePrimary ECC error 0x{:08x}",
-                header.return_code
-            )));
-        }
-
-        // Object handle (4 bytes)
-        if cursor + 4 > resp.len() {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "CreatePrimary ECC: truncated at object handle",
-            ));
-        }
-        let object_handle = u32::from_be_bytes([
-            resp[cursor],
-            resp[cursor + 1],
-            resp[cursor + 2],
-            resp[cursor + 3],
-        ]);
-        cursor += 4;
-
-        // paramSize (4 bytes)
-        if cursor + 4 > resp.len() {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "CreatePrimary ECC: truncated at paramSize",
-            ));
-        }
-        let _param_size = u32::from_be_bytes([
-            resp[cursor],
-            resp[cursor + 1],
-            resp[cursor + 2],
-            resp[cursor + 3],
-        ]);
-        cursor += 4;
-
-        // outPublic: 2-byte size prefix + blob
-        if cursor + 2 > resp.len() {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "CreatePrimary ECC: truncated at outPublic size",
-            ));
-        }
-        let out_public_size = u16::from_be_bytes([resp[cursor], resp[cursor + 1]]) as usize;
-        if cursor + 2 + out_public_size > resp.len() {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                format!(
-                    "CreatePrimary ECC: outPublic claims {} bytes but only {} remain",
-                    out_public_size,
-                    resp.len() - cursor - 2
-                ),
-            ));
-        }
-        let out_public = resp[cursor..cursor + 2 + out_public_size].to_vec();
-
+        // Reuse the same response parser as create_primary (RSA).
+        // CreatePrimaryResponse handles both RSA and ECC public areas.
+        let parsed = CreatePrimaryResponse::from_bytes(&resp)?;
+        let public_bytes = {
+            let mut b = Vec::new();
+            parsed.parameters.out_public.marshal(&mut b);
+            b
+        };
         Ok(CreatedPrimary {
-            handle: object_handle,
-            public: out_public,
+            handle: parsed.handles.object_handle,
+            public: public_bytes,
         })
     }
 
@@ -1051,16 +988,21 @@ impl<T: RawTpm> TpmCommandExt for T {
 }
 
 /// Helper to build a three-byte PCR bitmap for SHA256 bank given list of PCR indices.
-pub fn build_pcr_bitmap(pcrs: &[u32]) -> [u8; 3] {
+/// Returns an error if any PCR index is out of range (0-23).
+pub fn build_pcr_bitmap(pcrs: &[u32]) -> io::Result<[u8; 3]> {
     let mut bitmap = [0u8; 3];
     for &p in pcrs {
-        if p <= 23 {
-            let byte = (p / 8) as usize;
-            let bit = p % 8;
-            bitmap[byte] |= 1u8 << bit;
+        if p > 23 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("PCR index {p} out of range (0-23)"),
+            ));
         }
+        let byte = (p / 8) as usize;
+        let bit = p % 8;
+        bitmap[byte] |= 1u8 << bit;
     }
-    bitmap
+    Ok(bitmap)
 }
 
 fn nv_read_chunk(tpm: &impl RawTpm, nv_index: u32, size: u16, offset: u16) -> io::Result<Vec<u8>> {
@@ -1263,10 +1205,6 @@ mod tests {
         }
         let _ = tpm.nv_undefine_space(INDEX);
     }
-
-    // Integrated from coverage_tests + vtpm_commands: simple wrapper PCR values test already covered elsewhere.
-    // Integrated from vtpm_commands: ensure AK + quote path (quote_flow) now redundant with vtpm_create_quote_certify_flow.
-    // No duplicate needed here.
 
     // Additional NV roundtrip exercising multi-chunk (>1024) writes and reads
     #[test]
@@ -1654,9 +1592,6 @@ mod tests {
         Some(attest[cursor..cursor + contents_size].to_vec())
     }
 
-    // Build and send NV_DefineSpace. On hardware TPM this can fail (permissions); treat as skip.
-    // define_simple_nv removed in favor of nv_define_space helper (TpmCommandExt).
-
     #[test]
     fn read_pcr0() {
         let tpm = Tpm::open_reference_for_tests().expect("no reference TPM");
@@ -1959,33 +1894,34 @@ mod validation_tests {
 
     #[test]
     fn build_pcr_bitmap_empty() {
-        assert_eq!(build_pcr_bitmap(&[]), [0, 0, 0]);
+        assert_eq!(build_pcr_bitmap(&[]).unwrap(), [0, 0, 0]);
     }
 
     #[test]
     fn build_pcr_bitmap_single_pcr() {
-        assert_eq!(build_pcr_bitmap(&[0]), [0x01, 0x00, 0x00]);
-        assert_eq!(build_pcr_bitmap(&[7]), [0x80, 0x00, 0x00]);
-        assert_eq!(build_pcr_bitmap(&[8]), [0x00, 0x01, 0x00]);
-        assert_eq!(build_pcr_bitmap(&[23]), [0x00, 0x00, 0x80]);
+        assert_eq!(build_pcr_bitmap(&[0]).unwrap(), [0x01, 0x00, 0x00]);
+        assert_eq!(build_pcr_bitmap(&[7]).unwrap(), [0x80, 0x00, 0x00]);
+        assert_eq!(build_pcr_bitmap(&[8]).unwrap(), [0x00, 0x01, 0x00]);
+        assert_eq!(build_pcr_bitmap(&[23]).unwrap(), [0x00, 0x00, 0x80]);
     }
 
     #[test]
     fn build_pcr_bitmap_multiple_pcrs() {
         // PCRs 0,1,2,7 → byte0 = 0x01|0x02|0x04|0x80 = 0x87
-        assert_eq!(build_pcr_bitmap(&[0, 1, 2, 7]), [0x87, 0x00, 0x00]);
+        assert_eq!(build_pcr_bitmap(&[0, 1, 2, 7]).unwrap(), [0x87, 0x00, 0x00]);
     }
 
     #[test]
     fn build_pcr_bitmap_all_24() {
         let pcrs: Vec<u32> = (0..24).collect();
-        assert_eq!(build_pcr_bitmap(&pcrs), [0xFF, 0xFF, 0xFF]);
+        assert_eq!(build_pcr_bitmap(&pcrs).unwrap(), [0xFF, 0xFF, 0xFF]);
     }
 
     #[test]
-    fn build_pcr_bitmap_out_of_range_ignored() {
-        // PCRs > 23 are silently ignored
-        assert_eq!(build_pcr_bitmap(&[0, 24, 100]), [0x01, 0x00, 0x00]);
+    fn build_pcr_bitmap_out_of_range_errors() {
+        let err = build_pcr_bitmap(&[0, 24, 100]).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert!(err.to_string().contains("24"));
     }
 
     // ── quote_with_key: PCR index validation ────────────────────────

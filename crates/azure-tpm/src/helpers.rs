@@ -4,38 +4,13 @@
 // Internal implementation — documentation deferred.
 #![allow(missing_docs)]
 
+use crate::error::TpmError;
 use crate::types::TpmCommandCode;
 use crate::types::TpmMarshal;
 use crate::types::TPM_RS_PW;
 use crate::types::TPM_ST_NO_SESSIONS;
 use crate::types::TPM_ST_SESSIONS;
-use std::fmt;
 use std::io;
-
-/// Structured TPM error carrying the raw response code (rc), decoded description,
-/// and optional originating command code.
-#[derive(Debug)]
-pub struct TpmError {
-    pub rc: u32,
-    pub decoded: String,
-    pub command: Option<TpmCommandCode>,
-}
-
-impl fmt::Display for TpmError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(cmd) = &self.command {
-            write!(
-                f,
-                "TPM error 0x{:08x} (command={:?}/0x{:08x}): {}",
-                self.rc, cmd, *cmd as u32, self.decoded
-            )
-        } else {
-            write!(f, "TPM error 0x{:08x}: {}", self.rc, self.decoded)
-        }
-    }
-}
-
-impl std::error::Error for TpmError {}
 
 pub fn build_header_no_sessions(code: TpmCommandCode, out: &mut Vec<u8>) {
     out.extend_from_slice(&TPM_ST_NO_SESSIONS.to_be_bytes());
@@ -166,8 +141,6 @@ where
     buf
 }
 
-// NOTE: response_param_offset helper and legacy append_handles_* helpers removed after refactor.
-
 /// Parse a TPM response code, associating it with a specific command.
 pub(crate) fn parse_tpm_rc_with_cmd(resp: &[u8], command: TpmCommandCode) -> io::Result<()> {
     if resp.len() < 10 {
@@ -190,11 +163,11 @@ pub(crate) fn parse_tpm_rc_with_cmd(resp: &[u8], command: TpmCommandCode) -> io:
     let rc = u32::from_be_bytes([resp[6], resp[7], resp[8], resp[9]]);
     if rc != 0 {
         let decoded = decode_tpm_rc(rc);
-        return Err(io::Error::other(TpmError {
+        return Err(io::Error::other(TpmError::tpm_rc(
             rc,
             decoded,
-            command: Some(command),
-        }));
+            Some(command),
+        )));
     }
     Ok(())
 }
@@ -292,7 +265,7 @@ fn decode_tpm_rc(rc: u32) -> String {
 pub(crate) fn tpm_rc_from_io_error(e: &io::Error) -> Option<u32> {
     if let Some(inner) = e.get_ref() {
         if let Some(te) = inner.downcast_ref::<TpmError>() {
-            return Some(te.rc);
+            return te.tpm_rc_code();
         }
     }
     None
@@ -301,16 +274,18 @@ pub(crate) fn tpm_rc_from_io_error(e: &io::Error) -> Option<u32> {
 // Removed unused interpret_auth_string / hex_decode_lossy utilities.
 
 pub fn hex_fmt(bytes: &[u8]) -> String {
-    bytes
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect::<Vec<_>>()
-        .join("")
+    use std::fmt::Write;
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        let _ = write!(s, "{b:02x}");
+    }
+    s
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::TpmError;
     use crate::types::{TpmCommandCode, TPM_RS_PW, TPM_ST_NO_SESSIONS, TPM_ST_SESSIONS};
 
     // -----------------------------------------------------------------------
@@ -576,8 +551,7 @@ mod tests {
         // Should contain the decoded error
         let inner = err.get_ref().unwrap();
         let tpm_err = inner.downcast_ref::<TpmError>().unwrap();
-        assert_eq!(tpm_err.rc, 0x00000101);
-        assert_eq!(tpm_err.command, Some(TpmCommandCode::PcrRead));
+        assert_eq!(tpm_err.tpm_rc_code(), Some(0x00000101));
     }
 
     // -----------------------------------------------------------------------
@@ -586,11 +560,7 @@ mod tests {
 
     #[test]
     fn tpm_rc_from_io_error_with_tpm_error() {
-        let tpm_err = TpmError {
-            rc: 0x00000922,
-            decoded: "test".into(),
-            command: Some(TpmCommandCode::Quote),
-        };
+        let tpm_err = TpmError::tpm_rc(0x00000922, "test".into(), Some(TpmCommandCode::Quote));
         let io_err = io::Error::other(tpm_err);
         assert_eq!(tpm_rc_from_io_error(&io_err), Some(0x00000922));
     }
@@ -607,11 +577,11 @@ mod tests {
 
     #[test]
     fn tpm_error_display_with_command() {
-        let err = TpmError {
-            rc: 0x0000_0922,
-            decoded: "test description".into(),
-            command: Some(TpmCommandCode::Quote),
-        };
+        let err = TpmError::tpm_rc(
+            0x0000_0922,
+            "test description".into(),
+            Some(TpmCommandCode::Quote),
+        );
         let s = format!("{err}");
         assert!(s.contains("0x00000922"));
         assert!(s.contains("Quote"));
@@ -620,11 +590,7 @@ mod tests {
 
     #[test]
     fn tpm_error_display_without_command() {
-        let err = TpmError {
-            rc: 0x0000_0101,
-            decoded: "INITIALIZE".into(),
-            command: None,
-        };
+        let err = TpmError::tpm_rc(0x0000_0101, "INITIALIZE".into(), None);
         let s = format!("{err}");
         assert!(s.contains("0x00000101"));
         assert!(s.contains("INITIALIZE"));
@@ -645,7 +611,7 @@ mod tests {
         let err = parse_tpm_rc_with_cmd(&resp, TpmCommandCode::PcrRead).unwrap_err();
         let inner = err.get_ref().unwrap();
         let tpm_err = inner.downcast_ref::<TpmError>().unwrap();
-        assert!(tpm_err.decoded.contains("INITIALIZE"));
+        assert!(tpm_err.to_string().contains("INITIALIZE"));
     }
 
     #[test]
@@ -659,9 +625,10 @@ mod tests {
         let err = parse_tpm_rc_with_cmd(&resp, TpmCommandCode::PcrRead).unwrap_err();
         let inner = err.get_ref().unwrap();
         let tpm_err = inner.downcast_ref::<TpmError>().unwrap();
-        assert!(tpm_err.decoded.contains("FMT1"));
-        assert!(tpm_err.decoded.contains("VALUE"));
-        assert!(tpm_err.decoded.contains("PARAM"));
+        let desc = tpm_err.to_string();
+        assert!(desc.contains("FMT1"));
+        assert!(desc.contains("VALUE"));
+        assert!(desc.contains("PARAM"));
     }
 
     #[test]
@@ -675,8 +642,9 @@ mod tests {
         let err = parse_tpm_rc_with_cmd(&resp, TpmCommandCode::PcrRead).unwrap_err();
         let inner = err.get_ref().unwrap();
         let tpm_err = inner.downcast_ref::<TpmError>().unwrap();
-        assert!(tpm_err.decoded.contains("FMT1"));
-        assert!(tpm_err.decoded.contains("HANDLE"));
+        let desc = tpm_err.to_string();
+        assert!(desc.contains("FMT1"));
+        assert!(desc.contains("HANDLE"));
     }
 
     #[test]

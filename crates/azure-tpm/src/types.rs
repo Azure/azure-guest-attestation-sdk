@@ -96,14 +96,14 @@ impl fmt::Display for PcrAlgorithm {
 }
 
 impl FromStr for PcrAlgorithm {
-    type Err = (); // caller maps to user-facing error
+    type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_ascii_lowercase().as_str() {
             "sha1" => Ok(PcrAlgorithm::Sha1),
             "sha256" => Ok(PcrAlgorithm::Sha256),
             "sha384" => Ok(PcrAlgorithm::Sha384),
-            _ => Err(()),
+            _ => Err(format!("unsupported PCR algorithm: {s}")),
         }
     }
 }
@@ -1804,12 +1804,6 @@ impl TpmUnmarshal for TpmtPublic {
         let object_attributes = u32::unmarshal(d, c)?;
         let auth_policy = Tpm2bBytes::unmarshal(d, c)?;
         let symmetric = SymDefObject::unmarshal(d, c)?;
-        // if symmetric.alg != 0x0010 {
-        //     return Err(io::Error::new(
-        //         io::ErrorKind::InvalidData,
-        //         "unexpected symmetric alg",
-        //     ));
-        // }
         // scheme
         let scheme_id = u16::unmarshal(d, c)?;
         let scheme = match scheme_id {

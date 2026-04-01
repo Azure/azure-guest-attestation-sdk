@@ -29,6 +29,7 @@
 // `azure_guest_attestation_sdk::tpm::commands::*` paths keep working.
 pub use azure_tpm::commands;
 pub use azure_tpm::device;
+pub use azure_tpm::error;
 pub use azure_tpm::event_log;
 pub use azure_tpm::helpers;
 pub use azure_tpm::types;
@@ -41,4 +42,5 @@ pub mod attestation;
 // Re-export commonly-used items at the `tpm` level.
 pub use azure_tpm::commands::TpmCommandExt;
 pub use azure_tpm::device::{RawTpm, Tpm};
+pub use azure_tpm::error::{TpmError, TpmResult};
 pub use azure_tpm::types::TpmCommandCode;
