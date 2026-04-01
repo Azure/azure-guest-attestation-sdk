@@ -19,7 +19,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use azure_guest_attestation_sdk::tpm::{Tpm, TpmCommandExt};
+//! use azure_tpm::{Tpm, TpmCommandExt};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let tpm = Tpm::open()?;
@@ -28,16 +28,16 @@
 //! # }
 //! ```
 
-use crate::tpm::device::RawTpm;
-use crate::tpm::helpers::build_command_custom_sessions;
-use crate::tpm::helpers::hex_fmt;
-use crate::tpm::helpers::SessionEntry;
-use crate::tpm::helpers::{
+use crate::device::RawTpm;
+use crate::helpers::build_command_custom_sessions;
+use crate::helpers::hex_fmt;
+use crate::helpers::SessionEntry;
+use crate::helpers::{
     build_command_no_sessions, build_command_pw_sessions, parse_tpm_rc_with_cmd,
     tpm_rc_from_io_error,
 };
-use crate::tpm::types::command_prelude::*;
-use crate::tpm::types::PcrAlgorithm;
+use crate::types::command_prelude::*;
+use crate::types::PcrAlgorithm;
 use std::io;
 
 /// TPM2_SE_POLICY — starts a policy session that authorizes actions
@@ -868,7 +868,7 @@ impl<T: RawTpm> TpmCommandExt for T {
         }
 
         // Parse response header (also validates return_code == 0)
-        let (header, mut cursor) = crate::tpm::types::TpmResponseHeader::parse(&resp)?;
+        let (header, mut cursor) = crate::types::TpmResponseHeader::parse(&resp)?;
         if header.return_code != 0 {
             return Err(io::Error::other(format!(
                 "CreatePrimary ECC error 0x{:08x}",
@@ -1103,16 +1103,15 @@ fn nv_write_chunk(tpm: &impl RawTpm, nv_index: u32, chunk: &[u8], offset: u16) -
 #[cfg(all(test, feature = "vtpm-tests"))]
 mod tests {
     use super::*;
-    use crate::tpm::attestation::get_pcr_values;
-    use crate::tpm::device::Tpm;
-    use crate::tpm::types::rsa_restricted_signing_public;
-    use crate::tpm::types::rsa_unrestricted_sign_decrypt_public;
-    use crate::tpm::types::Hierarchy;
-    use crate::tpm::types::TpmaNvBits;
-    use crate::tpm::types::TPMA_NV_AUTHREAD;
-    use crate::tpm::types::TPMA_NV_AUTHWRITE;
-    use crate::tpm::types::TPMA_NV_OWNERREAD;
-    use crate::tpm::types::TPMA_NV_OWNERWRITE;
+    use crate::device::Tpm;
+    use crate::types::rsa_restricted_signing_public;
+    use crate::types::rsa_unrestricted_sign_decrypt_public;
+    use crate::types::Hierarchy;
+    use crate::types::TpmaNvBits;
+    use crate::types::TPMA_NV_AUTHREAD;
+    use crate::types::TPMA_NV_AUTHWRITE;
+    use crate::types::TPMA_NV_OWNERREAD;
+    use crate::types::TPMA_NV_OWNERWRITE;
 
     // This test exercises the miss path for find_nv_index by probing an obviously
     // unused / undefined NV index. If the TPM returns RC 0x18B (undefined NV index),
@@ -1277,8 +1276,8 @@ mod tests {
         const NV_INDEX: u32 = 0x0150_0026; // distinct test index
         let data = vec![0xABu8; 2048 + 100]; // > 2 chunks (1024 + 1024 + 100)
         {
-            use crate::tpm::commands::TpmCommandExt;
-            use crate::tpm::types::{NvPublic, ALG_SHA256, TPMA_NV_AUTHREAD, TPMA_NV_AUTHWRITE};
+            use crate::commands::TpmCommandExt;
+            use crate::types::{NvPublic, ALG_SHA256, TPMA_NV_AUTHREAD, TPMA_NV_AUTHWRITE};
             let public = NvPublic {
                 nv_index: NV_INDEX,
                 name_alg: ALG_SHA256,
@@ -1666,7 +1665,7 @@ mod tests {
             tracing::debug!(target: "guest_attest", "Skipping PCR read on reference TPM (not stabilized)");
             return;
         }
-        let res = get_pcr_values(&tpm, &[0]);
+        let res = tpm.read_pcrs_sha256(&[0]);
         match res {
             Ok(pairs) => {
                 if let Some((idx, digest)) = pairs.first() {
@@ -1875,7 +1874,7 @@ mod tests {
 
     #[test]
     fn vtpm_ecc_sign_verify_roundtrip() {
-        use crate::tpm::types::ecc_unrestricted_signing_public;
+        use crate::types::ecc_unrestricted_signing_public;
         use sha2::{Digest, Sha256};
 
         let tpm = match Tpm::open_reference_for_tests() {
@@ -1938,74 +1937,13 @@ mod tests {
         // Cleanup
         let _ = tpm.flush_context(created.handle);
     }
-
-    #[test]
-    fn vtpm_ecc_key_persist_sign_verify() {
-        use crate::tpm::attestation::{
-            create_and_persist_ecc_signing_key, sign_with_ecc_key, verify_with_ecc_key,
-            ECC_SIGNING_KEY_PERSISTENT_HANDLE,
-        };
-        use sha2::{Digest, Sha256};
-
-        let tpm = match Tpm::open_reference_for_tests() {
-            Ok(t) => t,
-            Err(_) => return,
-        };
-
-        // Create and persist ECC key
-        let pub_bytes = match create_and_persist_ecc_signing_key(&tpm) {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::debug!(target: "guest_attest", error = %e, "create_and_persist_ecc_signing_key failed, skipping");
-                return;
-            }
-        };
-
-        assert!(
-            !pub_bytes.is_empty(),
-            "Public key bytes should not be empty"
-        );
-
-        // Sign a test message
-        let test_message = b"Persistent ECC key signing test";
-        let digest = Sha256::digest(test_message);
-
-        let signature = match sign_with_ecc_key(&tpm, &digest) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::debug!(target: "guest_attest", error = %e, "sign_with_ecc_key failed, skipping");
-                // Try to clean up
-                let _ = tpm.evict_control(
-                    ECC_SIGNING_KEY_PERSISTENT_HANDLE,
-                    ECC_SIGNING_KEY_PERSISTENT_HANDLE,
-                );
-                return;
-            }
-        };
-
-        // Verify signature
-        match verify_with_ecc_key(&tpm, &digest, &signature) {
-            Ok(()) => {
-                // Success
-            }
-            Err(e) => {
-                tracing::debug!(target: "guest_attest", error = %e, "verify_with_ecc_key failed");
-            }
-        }
-
-        // Cleanup: remove the persistent key (best effort)
-        let _ = tpm.evict_control(
-            ECC_SIGNING_KEY_PERSISTENT_HANDLE,
-            ECC_SIGNING_KEY_PERSISTENT_HANDLE,
-        );
-    }
 }
 
 /// Pure-logic validation tests that do not require a TPM device.
 #[cfg(test)]
 mod validation_tests {
     use super::*;
-    use crate::tpm::types::{PcrAlgorithm, TpmtRsaDecryptScheme};
+    use crate::types::{PcrAlgorithm, TpmtRsaDecryptScheme};
 
     /// A mock TPM that panics on any actual transmit — proving the validation
     /// rejected the request before reaching the transport layer.
@@ -2187,7 +2125,7 @@ mod validation_tests {
         // But Tpm2bPublic unmarshal may fail on too-short data.
         // Let's just test that we get an error about PUBLIC trailing bytes by building
         // a Tpm2bPublic that marshals correctly and append extra bytes.
-        let pub_template = crate::tpm::types::rsa_restricted_signing_public();
+        let pub_template = crate::types::rsa_restricted_signing_public();
         let mut buf = Vec::new();
         pub_template.marshal(&mut buf);
         buf.push(0xFF); // trailing byte

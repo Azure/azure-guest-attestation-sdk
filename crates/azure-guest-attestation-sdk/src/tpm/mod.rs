@@ -3,38 +3,9 @@
 
 //! TPM 2.0 interface for Azure Guest Attestation.
 //!
-//! This module provides a comprehensive TPM 2.0 interface for confidential virtual machine
-//! (CVM) attestation workflows. It includes:
-//!
-//! - **Device access** ([`device`]): Platform-agnostic TPM device communication
-//! - **Commands** ([`commands`]): High-level TPM command implementations via [`TpmCommandExt`]
-//! - **Types** ([`types`]): TPM 2.0 data structures and marshaling
-//! - **Attestation** ([`attestation`]): CVM-specific attestation operations
-//! - **Helpers** ([`helpers`]): Internal utilities for command building
-//! - **Event log** ([`event_log`]): TCG event log parsing
-//!
-//! # Architecture
-//!
-//! ```text
-//! ┌─────────────────────────────────────────┐
-//! │           Attestation APIs              │
-//! │  (get_cvm_report, get_pcr_quote, etc.)  │
-//! └─────────────────┬───────────────────────┘
-//!                   │
-//! ┌─────────────────▼───────────────────────┐
-//! │         TpmCommandExt Trait             │
-//! │  (create_primary, sign, quote, etc.)    │
-//! └─────────────────┬───────────────────────┘
-//!                   │
-//! ┌─────────────────▼───────────────────────┐
-//! │           RawTpm Trait                  │
-//! │        (transmit_raw bytes)             │
-//! └─────────────────┬───────────────────────┘
-//!                   │
-//! ┌─────────────────▼───────────────────────┐
-//! │    Platform TPM Driver / vTPM / Ref     │
-//! └─────────────────────────────────────────┘
-//! ```
+//! This module re-exports the [`azure_tpm`] crate and extends it with
+//! CVM-specific attestation functions that depend on the SDK's report
+//! parsing types.
 //!
 //! # Example
 //!
@@ -54,15 +25,20 @@
 //! }
 //! ```
 
-/// CVM-specific attestation operations (AK management, quotes, ephemeral keys).
-pub mod attestation;
-pub mod commands;
-/// Platform-agnostic TPM device communication.
-pub mod device;
-pub mod event_log;
-pub mod helpers;
-pub mod types;
+// Re-export sub-modules from the azure-tpm crate so that existing
+// `azure_guest_attestation_sdk::tpm::commands::*` paths keep working.
+pub use azure_tpm::commands;
+pub use azure_tpm::device;
+pub use azure_tpm::event_log;
+pub use azure_tpm::helpers;
+pub use azure_tpm::types;
 
-pub use commands::TpmCommandExt;
-pub use device::{RawTpm, Tpm};
-pub use types::TpmCommandCode;
+/// Azure CVM-specific attestation operations built on top of [`azure_tpm`] TPM
+/// primitives: AK management, PCR quotes, ephemeral keys, ECC signing,
+/// CVM report parsing, and NV index operations.
+pub mod attestation;
+
+// Re-export commonly-used items at the `tpm` level.
+pub use azure_tpm::commands::TpmCommandExt;
+pub use azure_tpm::device::{RawTpm, Tpm};
+pub use azure_tpm::types::TpmCommandCode;

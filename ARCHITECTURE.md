@@ -4,11 +4,12 @@
 
 The Azure Guest Attestation SDK is a Rust library for guest attestation on Azure. It supports **Confidential VMs** (Intel TDX, AMD SEV-SNP, VBS) and **TrustedLaunch** VMs.
 
-The SDK is organized as a Cargo workspace with three members:
+The SDK is organized as a Cargo workspace with four members:
 
 | Crate | Purpose |
 |-------|--------|
-| `azure-guest-attestation-sdk` | Core library — TPM commands, TEE report parsing, attestation workflows |
+| `azure-tpm` | Platform-agnostic TPM 2.0 command interface (device access, commands, types, event log) |
+| `azure-guest-attestation-sdk` | Core library — Azure-specific attestation (AK management, CVM reports, TEE parsing, MAA workflows). Depends on `azure-tpm`. |
 | `azure-guest-attest` | CLI tool — exercises the SDK for testing and diagnostics |
 | `azure-guest-attest-web` | Web UI — browser-based interactive attestation tool (axum + HTML/JS) |
 
@@ -26,9 +27,13 @@ The SDK is organized as a Cargo workspace with three members:
 │  parse module (stateless)                               │
 │    snp_report  tdx_report  td_quote  attestation_token  │
 ├─────────────────────────────────────────────────────────┤
-│  guest_attest  ·  report  ·  tee_report  ·  tpm         │
+│  guest_attest  ·  report  ·  tee_report                 │
+│  tpm::attestation (AK, CVM reports, PCR quotes)         │
 │  endorsement (ThimClient)  ·  cose (COSE_Sign1 parser) │
 │  (provider abstractions, submission helpers, types)     │
+├─────────────────────────────────────────────────────────┤
+│  azure-tpm crate (platform-agnostic TPM 2.0)            │
+│    TpmCommandExt · Tpm device · types · event_log       │
 ├─────────────────────────────────────────────────────────┤
 │  TPM 2.0 device (vTPM / hardware TPM)                   │
 │  Azure THIM / IMDS (network)                            │
@@ -69,6 +74,14 @@ these steps, each of which can also be called independently:
 ## Module Map
 
 ```
+crates/azure-tpm/src/               # Platform-agnostic TPM 2.0 crate
+├── lib.rs            # Crate root — module declarations, re-exports
+├── device.rs         # Platform TPM access (Linux /dev/tpmrm0, Windows TBS, ref TPM)
+├── commands.rs       # TpmCommandExt trait — high-level TPM operations
+├── types.rs          # TPM 2.0 structures and marshaling
+├── helpers.rs        # Command buffer building utilities
+└── event_log.rs      # TCG event log parsing
+
 crates/azure-guest-attestation-sdk/src/
 ├── lib.rs            # Crate root — module declarations, re-exports, tracing init
 ├── client.rs         # AttestationClient, Provider, options & result types
@@ -87,16 +100,15 @@ crates/azure-guest-attestation-sdk/src/
 │   ├── td_quote.rs   # TDX quote v4/v5 parser
 │   └── vbs.rs        # VBS report structures
 └── tpm/
-    ├── mod.rs         # Re-exports
-    ├── device.rs      # Platform TPM access (Linux /dev/tpmrm0, Windows TBS)
-    ├── commands.rs    # TpmCommandExt trait — high-level TPM operations
-    ├── attestation.rs # CVM report retrieval, AK management, PCR quotes, ephemeral keys
-    ├── types.rs       # TPM 2.0 structures and marshaling
-    ├── helpers.rs     # Command buffer building utilities
-    └── event_log.rs   # TCG event log parsing
+    ├── mod.rs         # Re-exports from azure-tpm + attestation module
+    └── attestation.rs # Azure-specific: AK management, CVM reports, PCR quotes, ephemeral keys
 ```
 
 ## Key Design Decisions
+
+### azure-tpm is a separate crate
+
+Platform-agnostic TPM 2.0 primitives (device access, command execution, type marshaling, event log parsing) live in the `azure-tpm` crate. The SDK depends on `azure-tpm` and re-exports its modules under `azure_guest_attestation_sdk::tpm::*` for backward compatibility. Azure-specific attestation logic (AK management, CVM report retrieval, NV index constants) stays in the SDK's `tpm::attestation` module. This separation allows `azure-tpm` to be used independently by projects that need TPM access without Azure attestation.
 
 ### AttestationClient owns the TPM
 

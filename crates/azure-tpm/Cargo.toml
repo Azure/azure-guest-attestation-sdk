@@ -1,11 +1,11 @@
 [package]
-name = "azure-guest-attestation-sdk"
+name = "azure-tpm"
 version = "0.1.0"
-description = "Azure Guest Attestation SDK - TPM 2.0 and TEE attestation for CVM and TrustedLaunch VMs"
-documentation = "https://docs.rs/azure-guest-attestation-sdk"
+description = "Platform-agnostic TPM 2.0 command interface for Azure guest VMs"
+documentation = "https://docs.rs/azure-tpm"
 readme = "README.md"
-keywords = ["azure", "attestation", "tpm", "confidential-computing", "tee"]
-categories = ["cryptography", "hardware-support", "api-bindings"]
+keywords = ["tpm", "tpm2", "attestation", "azure", "confidential-computing"]
+categories = ["cryptography", "hardware-support"]
 
 # Inherit from workspace
 edition.workspace = true
@@ -15,29 +15,22 @@ authors.workspace = true
 rust-version.workspace = true
 
 [lib]
-name = "azure_guest_attestation_sdk"
+name = "azure_tpm"
 
 [dependencies]
-azure-tpm = { path = "../azure-tpm" }
 ms-tpm-20-ref = { git = "https://github.com/microsoft/ms-tpm-20-ref-rs", features = ["vendored"], optional = true }
 getrandom = { version = "0.2", optional = true }
 bitfield-struct = "0.6"
 
 # Workspace dependencies
-base64.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-rand.workspace = true
 sha2.workspace = true
 sha1.workspace = true
 digest.workspace = true
 hex.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
-aes-gcm.workspace = true
-
-# Use local reqwest spec to avoid workspace conflict
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
+rand.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys.workspace = true
@@ -45,8 +38,6 @@ windows-sys.workspace = true
 [features]
 default = []
 # Enable in-process reference TPM tests (pulls vendored OpenSSL via ms-tpm-20-ref)
-vtpm-tests = ["ms-tpm-20-ref", "getrandom", "azure-tpm/vtpm-tests"]
+vtpm-tests = ["ms-tpm-20-ref", "getrandom"]
 
 [dev-dependencies]
-num-bigint = "0.4"
-injectorpp = "0.5.0"

@@ -4,7 +4,7 @@
 // Internal implementation — documentation deferred.
 #![allow(missing_docs)]
 
-use crate::tpm::types::PcrAlgorithm;
+use crate::types::PcrAlgorithm;
 use digest::Digest;
 use sha1::Sha1;
 use sha2::{Sha256, Sha384};
@@ -1026,7 +1026,7 @@ struct JsonDigestEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tpm::types::PcrAlgorithm;
+    use crate::types::PcrAlgorithm;
 
     // -----------------------------------------------------------------------
     // event_type_description tests

@@ -12,7 +12,7 @@ state.  Read this file in its entirety before making any changes.
 |------|-------|
 | Language | Rust (edition 2021) |
 | MSRV | **1.94** — every change must compile on Rust 1.94 |
-| Workspace members | `crates/azure-guest-attestation-sdk` (SDK), `tools/azure-guest-attest` (CLI) |
+| Workspace members | `crates/azure-tpm` (TPM crate), `crates/azure-guest-attestation-sdk` (SDK), `tools/azure-guest-attest` (CLI), `tools/azure-guest-attest-web` (Web tool) |
 | CI | `.github/workflows/ci.yml` — runs on **both** `ubuntu-latest` and `windows-latest` |
 | Pre-commit hook | `.githooks/pre-commit` — must mirror CI flags exactly |
 

@@ -4,11 +4,11 @@
 // Internal implementation — documentation deferred.
 #![allow(missing_docs)]
 
-use crate::tpm::types::TpmCommandCode;
-use crate::tpm::types::TpmMarshal;
-use crate::tpm::types::TPM_RS_PW;
-use crate::tpm::types::TPM_ST_NO_SESSIONS;
-use crate::tpm::types::TPM_ST_SESSIONS;
+use crate::types::TpmCommandCode;
+use crate::types::TpmMarshal;
+use crate::types::TPM_RS_PW;
+use crate::types::TPM_ST_NO_SESSIONS;
+use crate::types::TPM_ST_SESSIONS;
 use std::fmt;
 use std::io;
 
@@ -311,7 +311,7 @@ pub fn hex_fmt(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tpm::types::{TpmCommandCode, TPM_RS_PW, TPM_ST_NO_SESSIONS, TPM_ST_SESSIONS};
+    use crate::types::{TpmCommandCode, TPM_RS_PW, TPM_ST_NO_SESSIONS, TPM_ST_SESSIONS};
 
     // -----------------------------------------------------------------------
     // hex_fmt tests

@@ -156,10 +156,8 @@ cargo clippy -p azure-guest-attestation-sdk --features vtpm-tests --all-targets 
 | `cose` | Minimal COSE_Sign1 parser (RFC 9052) — extracts payload from CBOR-encoded envelopes |
 | `endorsement` | `ThimClient` for TDX endorsement retrieval from Azure THIM, `EndorsementResponse` |
 | `parse` | Stateless parsing (reports, quotes, JWT tokens) |
-| `tpm::device` | TPM device access abstraction |
-| `tpm::commands` | `TpmCommandExt` trait with TPM command implementations |
-| `tpm::types` | TPM 2.0 data structures and marshaling |
-| `tpm::attestation` | High-level attestation APIs |
+| `tpm` | Re-exports from `azure-tpm` (device, commands, types, helpers, event_log) |
+| `tpm::attestation` | Azure-specific: AK management, CVM reports, PCR quotes, ephemeral keys, ECC signing |
 | `tee_report` | TEE-specific report parsing (TDX, SNP, VBS) |
 | `guest_attest` | Provider abstractions, submission helpers (`submit_to_provider`, `submit_tee_only`), attestation types |
 

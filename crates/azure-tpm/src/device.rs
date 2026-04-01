@@ -343,8 +343,8 @@ mod windows {
 // | `cargo test` (multi-threaded) | single process, shared singleton | safe – Mutex serializes access |
 #[cfg(feature = "vtpm-tests")]
 mod vtpm {
-    use crate::tpm::device::Inner;
-    use crate::tpm::device::Tpm;
+    use crate::device::Inner;
+    use crate::device::Tpm;
     use std::io;
     use std::sync::{Mutex, OnceLock};
 

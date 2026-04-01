@@ -297,6 +297,7 @@ name = "azure-guest-attestation-sdk"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
+ "azure-tpm",
  "base64 0.22.1",
  "bitfield-struct",
  "digest",
@@ -313,6 +314,24 @@ dependencies = [
  "sha2",
  "tracing",
  "tracing-subscriber",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "azure-tpm"
+version = "0.1.0"
+dependencies = [
+ "bitfield-struct",
+ "digest",
+ "getrandom 0.2.17",
+ "hex",
+ "ms-tpm-20-ref",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "tracing",
  "windows-sys 0.52.0",
 ]
 

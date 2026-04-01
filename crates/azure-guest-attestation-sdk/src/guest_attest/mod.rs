@@ -1219,13 +1219,12 @@ mod tests {
     // -----------------------------------------------------------------------
     // These tests exercise the format-validation branches that return Ok(None)
     // or Err before the TPM decrypt call is reached.
-    // Gated behind vtpm-tests because `Tpm::open_reference_for_tests()` is
+    // Gated behind vtpm-tests because `Tpm::open_reference()` is
     // only available with that feature.
 
     #[cfg(feature = "vtpm-tests")]
     fn dummy_tpm_for_parse_token() -> crate::tpm::device::Tpm {
-        crate::tpm::device::Tpm::open_reference_for_tests()
-            .expect("reference TPM for parse_token tests")
+        crate::tpm::device::Tpm::open_reference().expect("reference TPM for parse_token tests")
     }
 
     #[cfg(feature = "vtpm-tests")]

@@ -1,27 +1,59 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+//! Azure CVM-specific attestation operations built on top of the generic
+//! [`azure_tpm`] TPM 2.0 primitives.
+//!
+//! This module provides higher-level convenience functions that use
+//! Azure-specific NV indices and persistent handles:
+//!
+//! - **AK management**: `ensure_persistent_ak`, `get_ak_pub`,
+//!   `get_ak_cert`, `get_ak_cert_trimmed`
+//! - **PCR operations**: `get_pcr_values`, `get_pcr_quote`
+//! - **Ephemeral keys**: `get_ephemeral_key`, `decrypt_with_ephemeral_key`
+//! - **ECC signing**: `create_and_persist_ecc_signing_key`,
+//!   `sign_with_ecc_key`, `verify_with_ecc_key`
+//! - **CVM reports**: `get_cvm_report`, `get_cvm_report_raw`,
+//!   `get_tee_report_and_type`
+//! - **User data**: `get_user_data_nv`
+
 use std::io;
 
-use crate::tpm::device::Tpm;
-use crate::tpm::types::NvPublic;
-use crate::tpm::types::TpmaNvBits;
-use crate::tpm::types::TpmtSignature;
-use crate::tpm::types::{
+use azure_tpm::commands::TpmCommandExt;
+use azure_tpm::device::Tpm;
+use azure_tpm::helpers::hex_fmt;
+use azure_tpm::types::NvPublic;
+use azure_tpm::types::TpmaNvBits;
+use azure_tpm::types::TpmtSignature;
+use azure_tpm::types::{
     ecc_unrestricted_signing_public, rsa_restricted_signing_public,
     rsa_unrestricted_sign_decrypt_public_with_policy, Hierarchy, ALG_SHA256,
 };
-// TpmCommandExt may be used later for NV backed operations
+
 use crate::report::CvmAttestationReport;
 use crate::report::RuntimeClaims;
-use crate::tpm::commands::TpmCommandExt;
-use crate::tpm::helpers::hex_fmt;
+
+// ---------------------------------------------------------------------------
+// Azure-specific persistent handles
+// ---------------------------------------------------------------------------
 
 /// Persistent handle for the Attestation Key (AK) public object.
 pub const AK_PERSISTENT_HANDLE: u32 = 0x81000003;
 
-/// Persistent handle for ECC signing key
+/// Persistent handle for ECC signing key.
 pub const ECC_SIGNING_KEY_PERSISTENT_HANDLE: u32 = 0x81000010;
+
+// ---------------------------------------------------------------------------
+// Azure-specific NV indices
+// ---------------------------------------------------------------------------
+
+const NV_INDEX_AK_CERT: u32 = 0x1c101d0;
+const NV_INDEX_CVM_REPORT: u32 = 0x1400001;
+const NV_INDEX_USER_DATA: u32 = 0x1400002;
+
+// ---------------------------------------------------------------------------
+// Ephemeral key
+// ---------------------------------------------------------------------------
 
 /// Artifacts produced by creating an ephemeral RSA primary key.
 ///
@@ -40,6 +72,10 @@ pub struct EphemeralKey {
     /// Signature over `certify_info` from the AK.
     pub certify_sig: Vec<u8>,
 }
+
+// ---------------------------------------------------------------------------
+// ECC signing key management
+// ---------------------------------------------------------------------------
 
 /// Create an ECC P-256 signing key and persist it to TPM NV space.
 /// Returns the public key bytes.
@@ -103,6 +139,10 @@ pub fn verify_with_ecc_key(tpm: &Tpm, digest: &[u8], signature: &TpmtSignature) 
     tpm.verify_signature(ECC_SIGNING_KEY_PERSISTENT_HANDLE, digest, signature)
 }
 
+// ---------------------------------------------------------------------------
+// Attestation Key (AK) management
+// ---------------------------------------------------------------------------
+
 /// Ensure a restricted signing AK exists at the persistent handle. If missing, create and evict.
 pub fn ensure_persistent_ak(tpm: &Tpm) -> io::Result<()> {
     // Probe for existing
@@ -112,8 +152,7 @@ pub fn ensure_persistent_ak(tpm: &Tpm) -> io::Result<()> {
     let public = rsa_restricted_signing_public();
     let created = tpm.create_primary(Hierarchy::Endorsement, public.clone(), &[])?;
 
-    // Attempt EvictControl to make it persistent. If VALUE param index=2 (likely persistent handle already in use or unsupported),
-    // treat as success if the persistent handle now resolves via ReadPublic.
+    // Attempt EvictControl to make it persistent.
     tpm.evict_control(AK_PERSISTENT_HANDLE, created.handle)?;
 
     if let Err(e) = tpm.flush_context(created.handle) {
@@ -123,25 +162,6 @@ pub fn ensure_persistent_ak(tpm: &Tpm) -> io::Result<()> {
     Ok(())
 }
 
-const NV_INDEX_AK_CERT: u32 = 0x1c101d0;
-const NV_INDEX_CVM_REPORT: u32 = 0x1400001;
-const NV_INDEX_USER_DATA: u32 = 0x1400002;
-
-/// Read PCR values for provided list of indices (assuming SHA256 bank) returning (index,digest) pairs.
-pub fn get_pcr_values(tpm: &Tpm, pcrs: &[u32]) -> io::Result<Vec<(u32, Vec<u8>)>> {
-    tpm.read_pcrs_sha256(pcrs)
-}
-
-// NOTE: The following implementations rely on empty auth values and the password
-// authorization session handle (TPM_RS_PW). Azure CVM vTPMs use empty hierarchy
-// auths, so this is correct for the target environment. Platforms with non-empty
-// hierarchy auths will receive a TPM_RC_BAD_AUTH error.
-//
-// Known limitations:
-//  * Key handles are not cached; each call creates a fresh primary key.
-//  * get_pcr_quote creates a transient signing primary and immediately quotes.
-//  * Minimal parsing of responses; only the fields needed by the SDK are extracted.
-
 /// Get the public area of the Attestation Key (AK) object.
 pub fn get_ak_pub(tpm: &Tpm) -> io::Result<Vec<u8>> {
     tpm.read_public(AK_PERSISTENT_HANDLE)
@@ -150,7 +170,6 @@ pub fn get_ak_pub(tpm: &Tpm) -> io::Result<Vec<u8>> {
 /// Read the Attestation Key certificate from the TPM NV index.
 /// Returns an empty `Vec` if the NV index is not defined.
 pub fn get_ak_cert(tpm: &Tpm) -> io::Result<Vec<u8>> {
-    // Attempt to read NV index directly. If not defined, map to NotFound
     match tpm.nv_read_public(NV_INDEX_AK_CERT) {
         Ok(pub_info) => {
             let size = pub_info.data_size as usize;
@@ -160,7 +179,6 @@ pub fn get_ak_cert(tpm: &Tpm) -> io::Result<Vec<u8>> {
             tpm.read_nv_index(NV_INDEX_AK_CERT)
         }
         Err(e) => {
-            // If index missing return empty Vec rather than error to allow callers to decide
             if e.kind() == io::ErrorKind::NotFound {
                 Ok(Vec::new())
             } else {
@@ -177,53 +195,94 @@ pub fn get_ak_cert_trimmed(tpm: &Tpm) -> io::Result<Vec<u8>> {
     Ok(trim_der_certificate(full))
 }
 
-/// Trim trailing zero padding from a DER-encoded certificate.
-///
-/// Parses the outer SEQUENCE (0x30) tag and length to determine the actual
-/// certificate size, then truncates any trailing padding. Returns the input
-/// unchanged if it does not start with a valid SEQUENCE tag.
-fn trim_der_certificate(full: Vec<u8>) -> Vec<u8> {
-    if full.len() < 4 {
-        return full;
-    }
-    // Basic DER parser for Certificate ::= SEQUENCE (0x30)
-    if full[0] != 0x30 {
-        return full;
-    }
+// ---------------------------------------------------------------------------
+// PCR operations
+// ---------------------------------------------------------------------------
 
-    // Handle short vs long form length octets
-    let len_byte = full[1] as usize;
-    let (content_len, header_len) = if len_byte & 0x80 == 0 {
-        (len_byte, 2)
-    } else {
-        let n = len_byte & 0x7F; // number of subsequent length bytes
-        if n == 0 || n > 4 || 2 + n > full.len() {
-            return full;
+/// Read PCR values for provided list of indices (assuming SHA256 bank) returning (index,digest) pairs.
+pub fn get_pcr_values(tpm: &Tpm, pcrs: &[u32]) -> io::Result<Vec<(u32, Vec<u8>)>> {
+    tpm.read_pcrs_sha256(pcrs)
+}
+
+/// Produce a PCR quote over the supplied PCR indices (0-23) using a transient
+/// attestation key. Returns (attestation, signature) byte blobs.
+pub fn get_pcr_quote(tpm: &Tpm, pcrs: &[u32]) -> io::Result<(Vec<u8>, Vec<u8>)> {
+    tracing::trace!(target: "guest_attest", ?pcrs, "get_pcr_quote start");
+    if let Err(e) = ensure_persistent_ak(tpm) {
+        tracing::trace!(target: "guest_attest", error = %e, "ensure_persistent_ak before quote failed");
+        return Err(e);
+    }
+    let (quote, signature) = match tpm.quote_with_key(AK_PERSISTENT_HANDLE, pcrs) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::trace!(target: "guest_attest", error = %e, "TPM2_Quote failed");
+            return Err(e);
         }
-        let mut l: usize = 0;
-        for i in 0..n {
-            l = (l << 8) | (full[2 + i] as usize);
-        }
-        (l, 2 + n)
     };
 
-    let total = header_len + content_len;
-    if total <= full.len() {
-        full[..total].to_vec()
-    } else {
-        full
-    }
+    tracing::trace!(target: "guest_attest", quote = %hex_fmt(&quote), signature = %hex_fmt(&signature), "PCR quote result");
+
+    Ok((quote, signature))
 }
+
+// ---------------------------------------------------------------------------
+// Ephemeral key operations
+// ---------------------------------------------------------------------------
+
+/// Create a non-restricted (unrestricted) RSA 2048 key suitable for ephemeral
+/// use (signing + decrypt) and return an [`EphemeralKey`] with the public area,
+/// handle, and AK certification artifacts.
+///
+/// The key is certified by the persistent AK using TPM2_Certify so the
+/// attestation service can trust the ephemeral key binding.
+pub fn get_ephemeral_key(tpm: &Tpm, pcrs: &[u32]) -> io::Result<EphemeralKey> {
+    let policy = tpm.compute_pcr_policy_digest(pcrs)?;
+    tracing::debug!(target: "guest_attest", ?policy, "PCR policy digest");
+    let template = rsa_unrestricted_sign_decrypt_public_with_policy(policy);
+    let cp = tpm.create_primary(Hierarchy::Owner, template, pcrs)?;
+
+    tracing::debug!(target: "guest_attest", handle = format_args!("0x{:08x}", cp.handle), ?pcrs, "Created ephemeral primary key");
+
+    let (cert_info, cert_sig) = match tpm.certify_with_key(cp.handle, AK_PERSISTENT_HANDLE) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::debug!(target: "guest_attest", handle = format_args!("0x{:08x}", cp.handle), error = %e, "TPM2_Certify failed for object");
+            return Err(e);
+        }
+    };
+
+    Ok(EphemeralKey {
+        public: cp.public,
+        handle: cp.handle,
+        certify_info: cert_info,
+        certify_sig: cert_sig,
+    })
+}
+
+/// Decrypt data with an existing ephemeral RSA key (created via `get_ephemeral_key`).
+/// Uses TPM2_RSA_Decrypt with **RSAES (PKCS#1 v1.5)** scheme, matching the encryption
+/// scheme used by Microsoft Azure Attestation (MAA).
+pub fn decrypt_with_ephemeral_key(
+    tpm: &Tpm,
+    key_handle: u32,
+    pcrs: &[u32],
+    ciphertext: &[u8],
+) -> io::Result<Vec<u8>> {
+    use azure_tpm::types::TpmtRsaDecryptScheme;
+    tpm.rsa_decrypt(key_handle, pcrs, ciphertext, TpmtRsaDecryptScheme::Rsaes)
+}
+
+// ---------------------------------------------------------------------------
+// CVM report & user data NV operations
+// ---------------------------------------------------------------------------
 
 /// Read (if present) the user data NV index contents (trim trailing zero padding).
 /// Returns Ok(None) if the NV index is not defined. The returned Vec length is the
 /// number of meaningful bytes (<=64). If the index exists but all bytes are zero
 /// this returns Some(Vec::new()).
 pub fn get_user_data_nv(tpm: &Tpm) -> io::Result<Option<Vec<u8>>> {
-    // First check if the index exists (avoid surfacing raw TPM handle errors)
     match tpm.find_nv_index(NV_INDEX_USER_DATA) {
         Ok(Some(_pub)) => {
-            // Now read full 64 bytes
             let raw = match tpm.read_nv_index(NV_INDEX_USER_DATA) {
                 Ok(b) => b,
                 Err(e) => {
@@ -233,7 +292,6 @@ pub fn get_user_data_nv(tpm: &Tpm) -> io::Result<Option<Vec<u8>>> {
                     ))
                 }
             };
-            // Trim trailing zeros
             let meaningful_len = raw
                 .iter()
                 .rposition(|b| *b != 0)
@@ -244,7 +302,6 @@ pub fn get_user_data_nv(tpm: &Tpm) -> io::Result<Option<Vec<u8>>> {
         }
         Ok(None) => Ok(None),
         Err(e) => {
-            // Treat a NotFound style error conservatively as absence
             if e.kind() == io::ErrorKind::NotFound {
                 Ok(None)
             } else {
@@ -264,12 +321,13 @@ pub fn get_cvm_report(
     user_data: Option<&[u8]>,
 ) -> io::Result<(CvmAttestationReport, Option<RuntimeClaims>)> {
     let raw = get_cvm_report_raw(tpm, user_data)?;
-
     CvmAttestationReport::parse_with_runtime_claims(&raw)
 }
 
-/// Get a CVM report + optional runtime claims with arbitrary user data (0..=64 bytes).
-/// Input will be zero padded out to 64 bytes before staging into the NV index backing user data.
+/// Read the raw CVM report NV index with optional user data staging.
+///
+/// User data (0..=64 bytes) is zero-padded to 64 bytes before writing to the
+/// NV index. The raw report bytes are returned without parsing.
 pub fn get_cvm_report_raw(tpm: &Tpm, user_data: Option<&[u8]>) -> io::Result<Vec<u8>> {
     if let Some(data) = user_data {
         if data.len() > 64 {
@@ -315,6 +373,46 @@ pub fn get_tee_report_and_type(
     Ok((out, rtype))
 }
 
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/// Trim trailing zero padding from a DER-encoded certificate.
+///
+/// Parses the outer SEQUENCE (0x30) tag and length to determine the actual
+/// certificate size, then truncates any trailing padding. Returns the input
+/// unchanged if it does not start with a valid SEQUENCE tag.
+fn trim_der_certificate(full: Vec<u8>) -> Vec<u8> {
+    if full.len() < 4 {
+        return full;
+    }
+    if full[0] != 0x30 {
+        return full;
+    }
+
+    let len_byte = full[1] as usize;
+    let (content_len, header_len) = if len_byte & 0x80 == 0 {
+        (len_byte, 2)
+    } else {
+        let n = len_byte & 0x7F;
+        if n == 0 || n > 4 || 2 + n > full.len() {
+            return full;
+        }
+        let mut l: usize = 0;
+        for i in 0..n {
+            l = (l << 8) | (full[2 + i] as usize);
+        }
+        (l, 2 + n)
+    };
+
+    let total = header_len + content_len;
+    if total <= full.len() {
+        full[..total].to_vec()
+    } else {
+        full
+    }
+}
+
 fn define_user_data_index(tpm: &Tpm) -> io::Result<()> {
     let attr_bits = TpmaNvBits::new()
         .with_nv_ownerwrite(true)
@@ -331,7 +429,6 @@ fn define_user_data_index(tpm: &Tpm) -> io::Result<()> {
     };
     tracing::trace!(target: "guest_attest", nv_index = format_args!("0x{NV_INDEX_USER_DATA:08x}"), attrs = format_args!("0x{attrs:08x}"), "Defining user-data NV index");
     if let Err(e) = tpm.nv_define_space(public, &[]) {
-        // If define fails because index already exists (race) we proceed; otherwise return error.
         tracing::trace!(target: "guest_attest", error = %e, "Define attempt error");
         return Err(e);
     }
@@ -339,7 +436,6 @@ fn define_user_data_index(tpm: &Tpm) -> io::Result<()> {
     Ok(())
 }
 
-// Helper: define user data NV index if missing and write content
 fn ensure_user_data_index_and_write(tpm: &Tpm, user_data: &[u8; 64]) -> io::Result<()> {
     match tpm.find_nv_index(NV_INDEX_USER_DATA) {
         Ok(Some(_)) => {}
@@ -350,13 +446,11 @@ fn ensure_user_data_index_and_write(tpm: &Tpm, user_data: &[u8; 64]) -> io::Resu
         }
     }
 
-    // Write (single or multi-chunk handled internally)
     tpm.write_nv_index(NV_INDEX_USER_DATA, user_data)?;
 
     Ok(())
 }
 
-// Build a fixed 64-byte user data array, zero padding any unused tail.
 fn pad_user_data(input: &[u8]) -> [u8; 64] {
     let mut out = [0u8; 64];
     let len = input.len().min(64);
@@ -364,74 +458,14 @@ fn pad_user_data(input: &[u8]) -> [u8; 64] {
     out
 }
 
-/// Produce a PCR quote over the supplied PCR indices (0-23) using a transient
-/// attestation key. Returns (attestation, signature) byte blobs.
-pub fn get_pcr_quote(tpm: &Tpm, pcrs: &[u32]) -> io::Result<(Vec<u8>, Vec<u8>)> {
-    tracing::trace!(target: "guest_attest", ?pcrs, "get_pcr_quote start");
-    if let Err(e) = ensure_persistent_ak(tpm) {
-        tracing::trace!(target: "guest_attest", error = %e, "ensure_persistent_ak before quote failed");
-        return Err(e);
-    }
-    let (quote, signature) = match tpm.quote_with_key(AK_PERSISTENT_HANDLE, pcrs) {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::trace!(target: "guest_attest", error = %e, "TPM2_Quote failed");
-            return Err(e);
-        }
-    };
-
-    tracing::trace!(target: "guest_attest", quote = %hex_fmt(&quote), signature = %hex_fmt(&signature), "PCR quote result");
-
-    Ok((quote, signature))
-}
-
-/// Create a non-restricted (unrestricted) RSA 2048 key suitable for ephemeral
-/// use (signing + decrypt) and return an [`EphemeralKey`] with the public area,
-/// handle, and AK certification artifacts.
-///
-/// The key is certified by the persistent AK using TPM2_Certify so the
-/// attestation service can trust the ephemeral key binding.
-pub fn get_ephemeral_key(tpm: &Tpm, pcrs: &[u32]) -> io::Result<EphemeralKey> {
-    let policy = tpm.compute_pcr_policy_digest(pcrs)?;
-    tracing::debug!(target: "guest_attest", ?policy, "PCR policy digest");
-    let template = rsa_unrestricted_sign_decrypt_public_with_policy(policy);
-    let cp = tpm.create_primary(Hierarchy::Owner, template, pcrs)?;
-
-    tracing::debug!(target: "guest_attest", handle = format_args!("0x{:08x}", cp.handle), ?pcrs, "Created ephemeral primary key");
-
-    let (cert_info, cert_sig) = match tpm.certify_with_key(cp.handle, AK_PERSISTENT_HANDLE) {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::debug!(target: "guest_attest", handle = format_args!("0x{:08x}", cp.handle), error = %e, "TPM2_Certify failed for object");
-            return Err(e);
-        }
-    };
-
-    Ok(EphemeralKey {
-        public: cp.public,
-        handle: cp.handle,
-        certify_info: cert_info,
-        certify_sig: cert_sig,
-    })
-}
-
-/// Decrypt data with an existing ephemeral RSA key (created via `get_ephemeral_key`).
-/// Uses TPM2_RSA_Decrypt with **RSAES (PKCS#1 v1.5)** scheme, matching the encryption
-/// scheme used by Microsoft Azure Attestation (MAA).
-pub fn decrypt_with_ephemeral_key(
-    tpm: &Tpm,
-    key_handle: u32,
-    pcrs: &[u32],
-    ciphertext: &[u8],
-) -> io::Result<Vec<u8>> {
-    use crate::tpm::types::TpmtRsaDecryptScheme;
-    tpm.rsa_decrypt(key_handle, pcrs, ciphertext, TpmtRsaDecryptScheme::Rsaes)
-}
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "vtpm-tests")]
-    use super::ensure_user_data_index_and_write; // accessible within same module
+    use super::ensure_user_data_index_and_write;
     use super::pad_user_data;
     #[cfg(feature = "vtpm-tests")]
     use crate::tpm::attestation::ensure_persistent_ak;
@@ -442,17 +476,14 @@ mod tests {
     #[cfg(feature = "vtpm-tests")]
     use crate::tpm::commands::TpmCommandExt;
     #[cfg(feature = "vtpm-tests")]
-    use crate::tpm::device::Tpm; // bring read_nv_index into scope
+    use crate::tpm::device::Tpm;
 
     #[cfg(all(feature = "vtpm-tests", test))]
     #[test]
     fn vtpm_user_data_index_write_and_read() {
-        // Open the in-process reference TPM
-        let tpm = Tpm::open_reference_for_tests().expect("failed to open reference TPM");
+        let tpm = Tpm::open_reference().expect("failed to open reference TPM");
         let raw = b"hello";
         let padded = pad_user_data(raw);
-        // Under multi-threaded `cargo test`, the shared TPM may have stale NV
-        // state from concurrent tests. Skip gracefully on errors.
         if let Err(e) = ensure_user_data_index_and_write(&tpm, &padded) {
             tracing::debug!(target: "guest_attest", error = %e, "Skipping user data write test (shared TPM contention)");
             return;
@@ -467,8 +498,6 @@ mod tests {
                 );
             }
             Err(e) => {
-                // The reference TPM can return NV_SIZE errors for certain index configurations;
-                // verify via nv_read_public that the index at least exists and is sized correctly.
                 tracing::debug!(target: "guest_attest", error = %e, "NV read after write failed; checking public area");
                 let pub_info = tpm
                     .nv_read_public(super::NV_INDEX_USER_DATA)
@@ -489,7 +518,7 @@ mod tests {
 
     #[test]
     fn pad_user_data_partial() {
-        let input = b"abc"; // 3 bytes
+        let input = b"abc";
         let out = pad_user_data(input);
         assert_eq!(&out[..3], input);
         assert!(out[3..].iter().all(|&b| b == 0));
@@ -525,8 +554,7 @@ mod tests {
             use num_bigint::BigUint;
             use sha2::{Digest, Sha256};
 
-            // Open reference TPM & ensure AK; skip on contention errors
-            let tpm = Tpm::open_reference_for_tests().expect("open reference TPM");
+            let tpm = Tpm::open_reference().expect("open reference TPM");
             if let Err(e) = ensure_persistent_ak(&tpm) {
                 tracing::debug!(target: "guest_attest", error = %e, "Skipping vtpm_quote_signature_verifies (shared TPM contention)");
                 return;
@@ -545,7 +573,6 @@ mod tests {
                 "AK public unique modulus unexpectedly empty"
             );
 
-            // Issue Quote over PCR0
             let (attest, sig_blob) = match get_pcr_quote(&tpm, &[0]) {
                 Ok(v) => v,
                 Err(e) => {
@@ -556,8 +583,7 @@ mod tests {
             assert!(!attest.is_empty(), "attestation blob empty");
             assert!(!sig_blob.is_empty(), "signature blob empty");
 
-            // Perform RSASSA-PKCS1-v1_5 verification manually
-            let modulus_bytes = &ak_pub.inner.unique.0; // big-endian modulus
+            let modulus_bytes = &ak_pub.inner.unique.0;
             let modulus = BigUint::from_bytes_be(modulus_bytes);
             let exponent_u32 = if ak_pub.inner.exponent == 0 {
                 65537
@@ -566,29 +592,27 @@ mod tests {
             };
             let exponent = BigUint::from(exponent_u32);
             let s = BigUint::from_bytes_be(&sig_blob);
-            let m = s.modpow(&exponent, &modulus); // decrypted signature representative
+            let m = s.modpow(&exponent, &modulus);
             let mut em = m.to_bytes_be();
             let k = modulus_bytes.len();
             if em.len() < k {
-                // Left pad EM to k bytes
                 let mut pad = vec![0u8; k - em.len()];
                 pad.extend_from_slice(&em);
                 em = pad;
             }
             assert_eq!(em.len(), k, "EM length != modulus length");
 
-            // Build expected EMSA-PKCS1-v1_5 encoded message for SHA256
             const DER_PREFIX: &[u8] =
-                b"\x30\x31\x30\x0d\x06\x09\x60\x86\x48\x01\x65\x03\x04\x02\x01\x05\x00\x04\x20"; // DigestInfo prefix for SHA256
+                b"\x30\x31\x30\x0d\x06\x09\x60\x86\x48\x01\x65\x03\x04\x02\x01\x05\x00\x04\x20";
             let digest = Sha256::digest(&attest);
-            let t_len = 3 + DER_PREFIX.len() + digest.len(); // 0x00 0x01 0x00 + DER + H
+            let t_len = 3 + DER_PREFIX.len() + digest.len();
             assert!(
                 k > t_len,
                 "modulus too small for PKCS#1 padding (k={}, t_len={})",
                 k,
                 t_len
             );
-            let ps_len = k - t_len; // number of 0xFF padding bytes
+            let ps_len = k - t_len;
             assert!(
                 ps_len >= 8,
                 "PKCS#1 v1.5 requires PS length >= 8 (got {})",
@@ -613,22 +637,19 @@ mod tests {
     fn vtpm_get_quote() {
         #[cfg(feature = "vtpm-tests")]
         {
-            use crate::tpm::attestation::{ensure_persistent_ak, get_pcr_quote}; // explicit path
+            use crate::tpm::attestation::{ensure_persistent_ak, get_pcr_quote};
             use crate::tpm::device::Tpm;
 
-            let tpm = match Tpm::open_reference_for_tests() {
+            let tpm = match Tpm::open_reference() {
                 Ok(t) => t,
                 Err(_) => return,
-            }; // skip if reference TPM unavailable
+            };
 
-            // Ensure AK present (ignore error to allow skip on auth failures)
             if let Err(e) = ensure_persistent_ak(&tpm) {
                 tracing::debug!(target: "guest_attest", error = %e, "[vtpm-test] skipping: ensure_persistent_ak failed");
                 return;
             }
 
-            // Under multi-threaded `cargo test`, CreatePrimary or Quote may
-            // fail due to resource exhaustion on the shared reference TPM.
             match get_pcr_quote(&tpm, &[0]) {
                 Ok(_) => {}
                 Err(e) => {
@@ -645,7 +666,7 @@ mod tests {
             use crate::tpm::attestation::{ensure_persistent_ak, get_ephemeral_key};
             use crate::tpm::device::Tpm;
             use crate::tpm::types::{Tpm2bPublic, TpmUnmarshal};
-            let tpm = match Tpm::open_reference_for_tests() {
+            let tpm = match Tpm::open_reference() {
                 Ok(t) => t,
                 Err(_) => return,
             };
@@ -681,7 +702,7 @@ mod tests {
             use num_bigint::BigUint;
             use rand::{rngs::StdRng, RngCore, SeedableRng};
 
-            let tpm = match Tpm::open_reference_for_tests() {
+            let tpm = match Tpm::open_reference() {
                 Ok(t) => t,
                 Err(_) => return,
             };
@@ -695,7 +716,7 @@ mod tests {
             let modulus_be = &parsed.inner.unique.0;
             if modulus_be.len() != 256 {
                 return;
-            } // skip if not RSA2048
+            }
             let n = BigUint::from_bytes_be(modulus_be);
             let e_u32 = if parsed.inner.exponent == 0 {
                 65537
@@ -704,8 +725,7 @@ mod tests {
             };
             let e = BigUint::from(e_u32);
             let k = modulus_be.len();
-            let message = b"rsa decrypt sample"; // <= k - 11
-                                                 // Build PKCS#1 v1.5 block 0x00 0x02 PS 0x00 M
+            let message = b"rsa decrypt sample";
             let ps_len = k - 3 - message.len();
             if ps_len < 8 {
                 return;
@@ -733,7 +753,6 @@ mod tests {
                 pad.extend_from_slice(&ciphertext);
                 ciphertext = pad;
             }
-            // Use RSAES scheme directly since we built PKCS#1 v1.5 padding above
             let decrypted = match tpm.rsa_decrypt(
                 handle,
                 &[],
@@ -746,7 +765,6 @@ mod tests {
                     return;
                 }
             };
-            // Expect plaintext ends with original message (TPM strips PKCS#1 v1.5 padding including leading structure)
             if decrypted.ends_with(message) {
                 assert!(decrypted.len() <= message.len() + k);
             } else {
@@ -766,11 +784,10 @@ mod tests {
             use num_bigint::BigUint;
             use rand::{rngs::StdRng, RngCore, SeedableRng};
 
-            let tpm = match Tpm::open_reference_for_tests() {
+            let tpm = match Tpm::open_reference() {
                 Ok(t) => t,
                 Err(_) => return,
-            }; // skip if ref TPM absent
-               // Create policy-bound key (PCR0)
+            };
             let ek = match get_ephemeral_key(&tpm, &[0]) {
                 Ok(v) => v,
                 Err(_) => return,
@@ -780,10 +797,10 @@ mod tests {
             let parsed = Tpm2bPublic::unmarshal(&ek.public, &mut cur).expect("parse pub");
             if parsed.inner.unique.0.len() != 256 {
                 return;
-            } // only test RSA2048
+            }
             if parsed.inner.auth_policy.0.is_empty() {
                 return;
-            } // skip if policy not set unexpectedly
+            }
             let modulus_be = &parsed.inner.unique.0;
             let n = BigUint::from_bytes_be(modulus_be);
             let e_u32 = if parsed.inner.exponent == 0 {
@@ -821,7 +838,6 @@ mod tests {
                 pad.extend_from_slice(&ciphertext);
                 ciphertext = pad;
             }
-            // Use RSAES scheme directly since we built PKCS#1 v1.5 padding above
             let decrypted =
                 match tpm.rsa_decrypt(handle, &[0], &ciphertext, TpmtRsaDecryptScheme::Rsaes) {
                     Ok(v) => v,
@@ -845,7 +861,6 @@ mod tests {
 
     #[test]
     fn trim_der_short_input_under_4_bytes() {
-        // Inputs shorter than 4 bytes are returned as-is
         assert_eq!(trim_der_certificate(vec![0x30]), vec![0x30]);
         assert_eq!(trim_der_certificate(vec![0x30, 0x03]), vec![0x30, 0x03]);
         assert_eq!(
@@ -856,98 +871,86 @@ mod tests {
 
     #[test]
     fn trim_der_non_sequence_tag() {
-        // If first byte is not 0x30 (SEQUENCE), return as-is
         let input = vec![0x04, 0x02, 0xAA, 0xBB, 0x00, 0x00];
         assert_eq!(trim_der_certificate(input.clone()), input);
     }
 
     #[test]
     fn trim_der_short_form_no_padding() {
-        // 0x30 0x04 <4 content bytes> — exact fit, no trimming needed
         let input = vec![0x30, 0x04, 0x01, 0x02, 0x03, 0x04];
         assert_eq!(trim_der_certificate(input.clone()), input);
     }
 
     #[test]
     fn trim_der_short_form_with_trailing_zeros() {
-        // 0x30 0x04 <4 content bytes> <trailing zeros>
         let mut input = vec![0x30, 0x04, 0x01, 0x02, 0x03, 0x04];
         let expected = input.clone();
-        input.extend_from_slice(&[0x00; 10]); // trailing padding
+        input.extend_from_slice(&[0x00; 10]);
         assert_eq!(trim_der_certificate(input), expected);
     }
 
     #[test]
     fn trim_der_short_form_content_length_exceeds_buffer() {
-        // length says 120 but buffer only has 6 bytes total → return as-is
         let input = vec![0x30, 120, 0x01, 0x02, 0x03, 0x04];
         assert_eq!(trim_der_certificate(input.clone()), input);
     }
 
     #[test]
     fn trim_der_long_form_1_length_byte() {
-        // 0x30 0x81 0x05 <5 content bytes>  (long form with n=1)
         let mut input = vec![0x30, 0x81, 0x05];
         input.extend_from_slice(&[0xAA; 5]);
         let expected = input.clone();
-        input.extend_from_slice(&[0x00; 20]); // trailing padding
+        input.extend_from_slice(&[0x00; 20]);
         assert_eq!(trim_der_certificate(input), expected);
     }
 
     #[test]
     fn trim_der_long_form_2_length_bytes() {
-        // 0x30 0x82 0x01 0x00 <256 content bytes> (long form with n=2, length=256)
         let mut input = vec![0x30, 0x82, 0x01, 0x00];
         input.extend_from_slice(&[0xBB; 256]);
         let expected = input.clone();
-        input.extend_from_slice(&[0x00; 50]); // trailing padding
+        input.extend_from_slice(&[0x00; 50]);
         assert_eq!(trim_der_certificate(input), expected);
     }
 
     #[test]
     fn trim_der_long_form_3_length_bytes() {
-        // 0x30 0x83 0x00 0x00 0x03 <3 content bytes> (n=3, length=3)
         let mut input = vec![0x30, 0x83, 0x00, 0x00, 0x03];
         input.extend_from_slice(&[0xCC; 3]);
         let expected = input.clone();
-        input.extend_from_slice(&[0x00; 5]); // trailing padding
+        input.extend_from_slice(&[0x00; 5]);
         assert_eq!(trim_der_certificate(input), expected);
     }
 
     #[test]
     fn trim_der_long_form_4_length_bytes() {
-        // 0x30 0x84 0x00 0x00 0x00 0x02 <2 content bytes> (n=4, length=2)
         let mut input = vec![0x30, 0x84, 0x00, 0x00, 0x00, 0x02];
         input.extend_from_slice(&[0xDD; 2]);
         let expected = input.clone();
-        input.extend_from_slice(&[0x00; 8]); // trailing padding
+        input.extend_from_slice(&[0x00; 8]);
         assert_eq!(trim_der_certificate(input), expected);
     }
 
     #[test]
     fn trim_der_long_form_n_zero_bail() {
-        // 0x80 means "long form with 0 subsequent length bytes" — invalid, bail
         let input = vec![0x30, 0x80, 0x01, 0x02, 0x03, 0x04];
         assert_eq!(trim_der_certificate(input.clone()), input);
     }
 
     #[test]
     fn trim_der_long_form_n_exceeds_4_bail() {
-        // 0x85 means n=5 — we only support up to 4, bail
         let input = vec![0x30, 0x85, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02];
         assert_eq!(trim_der_certificate(input.clone()), input);
     }
 
     #[test]
     fn trim_der_long_form_n_exceeds_buffer_bail() {
-        // 0x82 means n=2 but buffer only has 3 bytes (need index 2+2=4) → bail
         let input = vec![0x30, 0x82, 0x01];
         assert_eq!(trim_der_certificate(input.clone()), input);
     }
 
     #[test]
     fn trim_der_long_form_content_exceeds_buffer() {
-        // n=1, length=200 but buffer only has 10 bytes total → return as-is
         let input = vec![0x30, 0x81, 200, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07];
         assert_eq!(trim_der_certificate(input.clone()), input);
     }

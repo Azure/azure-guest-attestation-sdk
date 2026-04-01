@@ -1104,7 +1104,7 @@ mod tests {
     fn get_cvm_evidence_rejects_user_data_over_64() {
         use crate::tpm::device::Tpm;
 
-        let tpm = match Tpm::open_reference_for_tests() {
+        let tpm = match Tpm::open_reference() {
             Ok(t) => t,
             Err(_) => return,
         };
@@ -1128,7 +1128,7 @@ mod tests {
     fn get_cvm_evidence_accepts_user_data_exactly_64() {
         use crate::tpm::device::Tpm;
 
-        let tpm = match Tpm::open_reference_for_tests() {
+        let tpm = match Tpm::open_reference() {
             Ok(t) => t,
             Err(_) => return,
         };
@@ -1154,7 +1154,7 @@ mod tests {
     fn get_cvm_evidence_accepts_none_user_data() {
         use crate::tpm::device::Tpm;
 
-        let tpm = match Tpm::open_reference_for_tests() {
+        let tpm = match Tpm::open_reference() {
             Ok(t) => t,
             Err(_) => return,
         };
@@ -1174,7 +1174,7 @@ mod tests {
     fn from_tpm_and_tpm_accessor() {
         use crate::tpm::device::Tpm;
 
-        let tpm = match Tpm::open_reference_for_tests() {
+        let tpm = match Tpm::open_reference() {
             Ok(t) => t,
             Err(_) => return,
         };
@@ -1188,7 +1188,7 @@ mod tests {
     fn get_device_evidence_default_options() {
         use crate::tpm::device::Tpm;
 
-        let tpm = match Tpm::open_reference_for_tests() {
+        let tpm = match Tpm::open_reference() {
             Ok(t) => t,
             Err(_) => return,
         };

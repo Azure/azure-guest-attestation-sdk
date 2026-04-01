@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/azure-guest-attestation-sdk",
+    "crates/azure-tpm",
     "tools/azure-guest-attest",
     "tools/azure-guest-attest-web",
 ]
@@ -55,3 +56,4 @@ windows-sys = { version = "0.52", features = ["Win32_System_Registry", "Win32_Fo
 
 # Internal crates
 azure-guest-attestation-sdk = { path = "crates/azure-guest-attestation-sdk" }
+azure-tpm = { path = "crates/azure-tpm" }

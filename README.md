@@ -11,7 +11,8 @@ Azure Attestation SDK for Confidential VMs (Intel TDX, AMD SEV-SNP) and TrustedL
 ├── .cargo/config.toml              # Cargo aliases (cargo nt, cargo vt)
 ├── .config/nextest.toml            # cargo-nextest configuration
 ├── crates/
-│   └── azure-guest-attestation-sdk/       # Core library (publishable to crates.io)
+│   ├── azure-tpm/                         # Platform-agnostic TPM 2.0 crate
+│   └── azure-guest-attestation-sdk/       # Core attestation library (depends on azure-tpm)
 └── tools/
     ├── azure-guest-attest/                 # CLI tool
     └── azure-guest-attest-web/             # Web UI (axum + HTML/JS)
@@ -119,9 +120,18 @@ Build requirements:
 
 ## Crates
 
+### [azure-tpm](crates/azure-tpm/)
+
+Platform-agnostic TPM 2.0 command interface. Provides device access, high-level TPM commands (`TpmCommandExt`), type marshaling, and TCG event log parsing. No Azure-specific logic.
+
+```toml
+[dependencies]
+azure-tpm = "0.1"
+```
+
 ### [azure-guest-attestation-sdk](crates/azure-guest-attestation-sdk/)
 
-Core attestation library - publishable to [crates.io](https://crates.io/crates/azure-guest-attestation-sdk).
+Core attestation library - publishable to [crates.io](https://crates.io/crates/azure-guest-attestation-sdk). Depends on `azure-tpm` for TPM primitives.
 
 ```toml
 [dependencies]
