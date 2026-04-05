@@ -336,6 +336,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "azure-tpm-tool"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "azure-tpm",
+ "clap",
+ "hex",
+]
+
+[[package]]
 name = "backtrace"
 version = "0.3.76"
 source = "registry+https://github.com/rust-lang/crates.io-index"

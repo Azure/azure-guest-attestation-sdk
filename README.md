@@ -14,8 +14,9 @@ Azure Attestation SDK for Confidential VMs (Intel TDX, AMD SEV-SNP) and TrustedL
 │   ├── azure-tpm/                         # Platform-agnostic TPM 2.0 crate
 │   └── azure-guest-attestation-sdk/       # Core attestation library (depends on azure-tpm)
 └── tools/
-    ├── azure-guest-attest/                 # CLI tool
-    └── azure-guest-attest-web/             # Web UI (axum + HTML/JS)
+    ├── azure-guest-attest/                 # CLI tool — attestation operations
+    ├── azure-guest-attest-web/             # Web UI (axum + HTML/JS)
+    └── azure-tpm-tool/                     # CLI tool — low-level TPM 2.0 operations
 ```
 
 ## Quick Start
@@ -50,8 +51,11 @@ cargo build --release
 # Library only
 cargo build -p azure-guest-attestation-sdk --release
 
-# CLI tool only
+# Attestation CLI tool
 cargo build -p azure-guest-attest --release
+
+# TPM CLI tool
+cargo build -p azure-tpm-tool --release
 ```
 
 ## Testing
@@ -155,6 +159,26 @@ Command-line tool for guest attestation operations.
 ```bash
 azure-guest-attest --help
 ```
+
+### [azure-tpm-tool](tools/azure-tpm-tool/)
+
+Command-line tool for low-level TPM 2.0 operations. Uses `azure-tpm` directly (no SDK / attestation dependency). Supports PCR reads, NV index management, key creation, event log parsing, and PCR quotes.
+
+```bash
+# Build
+cargo build -p azure-tpm-tool --release
+
+# Example: read SHA-256 PCR bank
+sudo target/release/azure-tpm-tool pcr-read --alg sha256
+
+# Example: define an NV index, write data, read it back
+sudo target/release/azure-tpm-tool nv-define --index 0x01500100 --size 32
+sudo target/release/azure-tpm-tool nv-write --index 0x01500100 --string "hello"
+sudo target/release/azure-tpm-tool nv-read --index 0x01500100
+sudo target/release/azure-tpm-tool nv-undefine --index 0x01500100
+```
+
+See [tools/azure-tpm-tool/README.md](tools/azure-tpm-tool/README.md) for the full command reference.
 
 ### [azure-guest-attest-web](tools/azure-guest-attest-web/)
 

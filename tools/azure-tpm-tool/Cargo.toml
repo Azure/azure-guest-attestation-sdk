@@ -1,0 +1,18 @@
+[package]
+name = "azure-tpm-tool"
+version = "0.1.0"
+description = "CLI tool for low-level TPM 2.0 operations using azure-tpm"
+
+# Inherit from workspace
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+azure-tpm.workspace = true
+
+clap.workspace = true
+hex.workspace = true
+anyhow.workspace = true

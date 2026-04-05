@@ -5,6 +5,7 @@ members = [
     "crates/azure-tpm",
     "tools/azure-guest-attest",
     "tools/azure-guest-attest-web",
+    "tools/azure-tpm-tool",
 ]
 
 # ---------------------------------------------------------------------------
