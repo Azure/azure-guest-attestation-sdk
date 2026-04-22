@@ -24,6 +24,7 @@ use azure_tpm::device::Tpm;
 use azure_tpm::helpers::hex_fmt;
 use azure_tpm::types::NvPublic;
 use azure_tpm::types::TpmaNvBits;
+use azure_tpm::types::TpmtRsaDecryptScheme;
 use azure_tpm::types::TpmtSignature;
 use azure_tpm::types::{
     ecc_unrestricted_signing_public, rsa_restricted_signing_public,
@@ -259,17 +260,16 @@ pub fn get_ephemeral_key(tpm: &Tpm, pcrs: &[u32]) -> io::Result<EphemeralKey> {
     })
 }
 
-/// Decrypt data with an existing ephemeral RSA key (created via `get_ephemeral_key`).
-/// Uses TPM2_RSA_Decrypt with **RSAES (PKCS#1 v1.5)** scheme, matching the encryption
-/// scheme used by Microsoft Azure Attestation (MAA).
+/// Decrypt ciphertext with an existing ephemeral RSA key (created via
+/// `get_ephemeral_key`) using the caller-supplied TPM RSA decrypt scheme.
 pub fn decrypt_with_ephemeral_key(
     tpm: &Tpm,
     key_handle: u32,
     pcrs: &[u32],
     ciphertext: &[u8],
+    scheme: TpmtRsaDecryptScheme,
 ) -> io::Result<Vec<u8>> {
-    use azure_tpm::types::TpmtRsaDecryptScheme;
-    tpm.rsa_decrypt(key_handle, pcrs, ciphertext, TpmtRsaDecryptScheme::Rsaes)
+    tpm.rsa_decrypt(key_handle, pcrs, ciphertext, scheme)
 }
 
 // ---------------------------------------------------------------------------

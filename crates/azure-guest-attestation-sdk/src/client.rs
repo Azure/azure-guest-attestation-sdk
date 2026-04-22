@@ -37,6 +37,7 @@ use crate::report::{self, CvmAttestationReport, CvmReportType, RuntimeClaims};
 use crate::tpm::attestation;
 use crate::tpm::commands::TpmCommandExt;
 use crate::tpm::device::Tpm;
+use crate::tpm::types::TpmtRsaDecryptScheme;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -182,7 +183,12 @@ pub struct Endorsement {
 /// Result of a successful attestation.
 #[derive(Debug, Clone)]
 pub struct AttestResult {
-    /// JWT token returned by the attestation provider (if the provider returns one).
+    /// Token returned by the attestation provider (if the provider returns one).
+    ///
+    /// [`AttestationClient::attest_guest`] will attempt to decrypt a guest
+    /// attestation token envelope before populating this field. As a result,
+    /// this may contain either a decrypted JWT or the original provider token
+    /// when the response is not an encrypted token envelope.
     pub token: Option<String>,
     /// The raw JSON request body that was sent to the provider.
     pub request_json: String,
@@ -482,6 +488,12 @@ impl AttestationClient {
     /// [`create_attestation_report`](Self::create_attestation_report) to
     /// assemble the request, then submits it to the provider with retry logic.
     ///
+    /// If the provider returns a token, this method attempts to decrypt it as
+    /// a guest attestation token envelope using the attested PCRs. On
+    /// success, [`AttestResult::token`] contains the decrypted JWT; otherwise
+    /// it preserves the original provider token unless decryption fails with
+    /// an error.
+    ///
     /// **TrustedLaunch** VMs are automatically detected: when the CVM report
     /// NV index is absent the request carries
     /// [`IsolationType::TrustedLaunch`]
@@ -542,6 +554,14 @@ impl AttestationClient {
         let provider_impl = make_provider(&provider);
         let token = guest_attest::submit_to_provider(&encoded, provider_impl.as_ref())?;
         timer.mark("provider_submit");
+
+        let token = match token {
+            Some(token) => match self.decrypt_token(&report.pcrs, &token)? {
+                Some(jwt) => Some(jwt),
+                None => Some(token),
+            },
+            None => None,
+        };
 
         Ok(AttestResult {
             token,
@@ -614,9 +634,9 @@ impl AttestationClient {
     /// given PCR indices.
     ///
     /// The ephemeral key is a deterministic TPM2 primary — it is recreated
-    /// from the same PCRs each time.  The decryption uses RSAES (PKCS#1 v1.5),
-    /// matching the scheme used by Microsoft Azure Attestation (MAA) to
-    /// encrypt data to the VM.
+    /// from the same PCRs each time. The caller chooses the TPM RSA decrypt
+    /// scheme so higher-level integrations can match their own ciphertext
+    /// contract.
     ///
     /// This is a lower-level primitive than [`decrypt_token`](Self::decrypt_token):
     /// it operates on raw RSA ciphertext bytes rather than the full MAA
@@ -625,9 +645,11 @@ impl AttestationClient {
         &self,
         pcrs: &[u32],
         ciphertext: &[u8],
+        scheme: TpmtRsaDecryptScheme,
     ) -> crate::error::Result<Vec<u8>> {
         let handle = self.recreate_ephemeral_key(pcrs)?;
-        let result = attestation::decrypt_with_ephemeral_key(&self.tpm, handle, pcrs, ciphertext);
+        let result =
+            attestation::decrypt_with_ephemeral_key(&self.tpm, handle, pcrs, ciphertext, scheme);
         let _ = self.tpm.flush_context(handle);
         Ok(result?)
     }
