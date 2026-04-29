@@ -18,7 +18,7 @@ use serde::Deserialize;
 
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::System::Registry::{
-    RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY_LOCAL_MACHINE, KEY_READ,
+    RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_LOCAL_MACHINE, KEY_READ,
 };
 
 const SYSTEMD_EVENT_TYPE: u32 = 0x8000_00E0;
@@ -254,7 +254,7 @@ fn read_windows_wbcl_registry() -> io::Result<Option<(Vec<u8>, PathBuf)>> {
     const VALUE_NAME: &str = "WBCL";
 
     unsafe {
-        let mut hkey: isize = 0;
+        let mut hkey: HKEY = std::ptr::null_mut();
         let key_wide: Vec<u16> = KEY_PATH.encode_utf16().chain([0]).collect();
         let status = RegOpenKeyExW(
             HKEY_LOCAL_MACHINE,
