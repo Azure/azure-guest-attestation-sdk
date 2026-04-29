@@ -25,6 +25,28 @@ allow = [
 # Warn on multiple versions of the same crate (helps catch bloat).
 multiple-versions = "warn"
 wildcards = "allow"
+# Known transitive duplicates we cannot control from our direct deps.
+# Revisit these whenever upstream crates upgrade.
+skip = [
+    # `ring` (via rustls/rcgen) still pulls the older windows-sys 0.52 line.
+    { name = "windows-sys", version = "=0.52.0" },
+    { name = "windows-targets", version = "=0.52.6" },
+    { name = "windows_aarch64_gnullvm", version = "=0.52.6" },
+    { name = "windows_aarch64_msvc", version = "=0.52.6" },
+    { name = "windows_i686_gnu", version = "=0.52.6" },
+    { name = "windows_i686_gnullvm", version = "=0.52.6" },
+    { name = "windows_i686_msvc", version = "=0.52.6" },
+    { name = "windows_x86_64_gnu", version = "=0.52.6" },
+    { name = "windows_x86_64_gnullvm", version = "=0.52.6" },
+    { name = "windows_x86_64_msvc", version = "=0.52.6" },
+    # `clap`'s anstyle-query/anstyle-wincon track windows-sys 0.60 while tokio
+    # tracks 0.61 — both are current, just out of phase.
+    { name = "windows-sys", version = "=0.60.2" },
+    # `crypto-common` (sha2/digest) and `ring` still depend on the
+    # rand_core 0.6 / getrandom 0.2 line.
+    { name = "rand_core", version = "=0.6.4" },
+    { name = "getrandom", version = "=0.2.17" },
+]
 
 [sources]
 # Only allow crates from crates.io or specific git repos.
