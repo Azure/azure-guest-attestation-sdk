@@ -807,7 +807,7 @@ fn main() -> anyhow::Result<()> {
             let mut parsed_logs = Vec::new();
             let mut skipped_logs = Vec::new();
             let mut text_logs = Vec::new();
-            for (raw_log, source) in raw_logs.into_iter().zip(sources.into_iter()) {
+            for (raw_log, source) in raw_logs.into_iter().zip(sources) {
                 match event_log::parse_event_log(&raw_log) {
                     Ok(parsed) => parsed_logs.push((source, parsed)),
                     Err(err) => {

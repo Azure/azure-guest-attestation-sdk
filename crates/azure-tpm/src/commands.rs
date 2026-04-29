@@ -570,10 +570,7 @@ impl<T: RawTpm> TpmCommandExt for T {
 
             // Track whether we made progress this iteration.
             let mut progress = false;
-            for (idx, digest) in returned_indices
-                .into_iter()
-                .zip(parsed.parameters.digests.into_iter())
-            {
+            for (idx, digest) in returned_indices.into_iter().zip(parsed.parameters.digests) {
                 if remaining.remove(&idx) {
                     if digest.len() != alg.digest_len() {
                         return Err(io::Error::new(
@@ -743,9 +740,11 @@ impl<T: RawTpm> TpmCommandExt for T {
     }
 
     fn start_auth_session(&self, session_type: u8, auth_hash_alg: u16) -> io::Result<u32> {
-        use rand::RngCore;
+        use rand::TryRngCore;
         let mut nonce = vec![0u8; 16];
-        rand::rngs::OsRng.fill_bytes(&mut nonce);
+        rand::rngs::OsRng
+            .try_fill_bytes(&mut nonce)
+            .map_err(io::Error::other)?;
         let parameters = StartAuthSessionCommandParameters {
             nonce_caller: Tpm2bBytes(nonce),
             encrypted_salt: Tpm2bBytes(Vec::new()),

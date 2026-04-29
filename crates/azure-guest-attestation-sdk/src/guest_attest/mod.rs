@@ -565,11 +565,11 @@ pub fn collect_tcg_logs(os: &OsInfo) -> Vec<u8> {
 #[cfg(target_os = "windows")]
 fn read_windows_wbcl() -> Vec<u8> {
     use windows_sys::Win32::System::Registry::{
-        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY_LOCAL_MACHINE, KEY_READ,
+        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_LOCAL_MACHINE, KEY_READ,
     };
     const KEY_PATH: &str = r"SYSTEM\CurrentControlSet\Control\IntegrityServices";
     unsafe {
-        let mut hkey: isize = 0;
+        let mut hkey: HKEY = std::ptr::null_mut();
         let key_wide: Vec<u16> = KEY_PATH.encode_utf16().chain([0]).collect();
         if RegOpenKeyExW(
             HKEY_LOCAL_MACHINE,
