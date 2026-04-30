@@ -699,6 +699,7 @@ pub fn parse_token(
         ephemeral_key_handle,
         pcrs,
         &encrypted_inner_key,
+        crate::tpm::types::TpmtRsaDecryptScheme::Rsaes,
     )?;
     use aes_gcm::{aead::Aead, aead::KeyInit, Aes128Gcm, Aes256Gcm, Nonce};
     let mut ct_and_tag = Vec::with_capacity(jwt_ct.len() + auth_tag.len());
