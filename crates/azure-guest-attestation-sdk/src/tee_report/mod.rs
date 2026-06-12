@@ -8,9 +8,16 @@ pub mod td_quote;
 pub mod tdx;
 pub mod vbs;
 
+/// HTTP resolver for Intel TCB info keyed on FMSPC (Azure THIM / Intel PCS).
+pub mod fmspc_resolver;
+
+pub use fmspc_resolver::{
+    FmspcResolver, TcbInfoResponse, TeeKind, AZURE_THIM_GLOBAL_BASE_URL, INTEL_PCS_V4_BASE_URL,
+};
 pub use td_quote::{
     parse_td_quote, parse_td_quote_with_options, pretty_td_quote as pretty_td_quote_v5,
-    ParsedTdQuote, TdQuoteBody, TdQuoteParseError, TdQuoteSignatureMode,
+    FmspcExtractError, ParsedTdQuote, TdQuoteBody, TdQuoteParseError, TdQuoteSignatureMode,
+    FMSPC_LEN,
 };
 
 use std::fmt::Write as _;

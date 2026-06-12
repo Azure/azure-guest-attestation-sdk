@@ -690,6 +690,9 @@ fn main() -> anyhow::Result<()> {
             let rendered =
                 render_td_quote(&quote_bytes, hex, pretty, ignore_signature, capture_chain)?;
             writeln!(writer, "{}", rendered.display)?;
+            if let Some(fmspc) = &rendered.fmspc {
+                writeln!(writer, "FMSPC: {}", hex::encode(fmspc))?;
+            }
             if let Some(err) = &rendered.signature_error {
                 writeln!(
                     writer,
@@ -1198,6 +1201,7 @@ struct RenderedTdQuote {
     display: String,
     pck_cert_chain: Option<Vec<u8>>,
     qe_identity: Option<Vec<u8>>,
+    fmspc: Option<[u8; 6]>,
     signature_error: Option<String>,
 }
 
@@ -1213,6 +1217,7 @@ fn render_td_quote(
             display: hex::encode(bytes),
             pck_cert_chain: None,
             qe_identity: None,
+            fmspc: None,
             signature_error: None,
         });
     }
@@ -1225,6 +1230,7 @@ fn render_td_quote(
     let parsed = parse_td_quote_with_options(bytes, mode)
         .map_err(|e| anyhow::anyhow!("failed to parse TD quote: {e}"))?;
 
+    let fmspc = parsed.fmspc().ok();
     let mut pck_cert_chain = None;
     let mut qe_identity = None;
     if capture_chain {
@@ -1248,6 +1254,7 @@ fn render_td_quote(
         display,
         pck_cert_chain,
         qe_identity,
+        fmspc,
         signature_error: parsed.signature_parse_error.as_ref().map(|e| e.to_string()),
     })
 }
