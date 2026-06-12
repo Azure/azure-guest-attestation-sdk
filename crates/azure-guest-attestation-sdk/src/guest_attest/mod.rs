@@ -395,9 +395,9 @@ pub struct AttestCvmResult {
 pub struct TeeOnlyRequest {
     /// Either 'quote' (TDX) or 'report' (SNP)
     pub evidence_field: String,
-    /// Base64 (standard) encoded evidence body (TD quote or JSON-wrapped SNP report+VCEK)
+    /// Base64url (no padding) encoded evidence body (TD quote or JSON-wrapped SNP report+VCEK)
     pub evidence_b64: String,
-    /// Base64 (standard) encoded runtime data (currently empty or future use)
+    /// Base64url (no padding) encoded runtime data (currently empty or future use)
     pub runtime_b64: String,
     /// Original report type
     pub report_type: String,
@@ -416,7 +416,7 @@ pub fn build_tee_only_payload_from_evidence(
     evidence: &crate::client::CvmEvidence,
     endorsement: Option<&crate::client::Endorsement>,
 ) -> io::Result<(String, crate::report::CvmReportType)> {
-    use base64::engine::general_purpose::STANDARD;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     let rtype = evidence.report_type;
     let runtime_data = Vec::new();
     let (evidence_field, evidence_bytes) = match rtype {
@@ -429,8 +429,8 @@ pub fn build_tee_only_payload_from_evidence(
                 }
             };
             let snp_report_json = serde_json::json!({
-                "SnpReport": STANDARD.encode(&evidence.tee_report),
-                "VcekCertChain": STANDARD.encode(&vcek_chain)
+                "SnpReport": URL_SAFE_NO_PAD.encode(&evidence.tee_report),
+                "VcekCertChain": URL_SAFE_NO_PAD.encode(&vcek_chain)
             });
             let snp_bytes = serde_json::to_vec(&snp_report_json)
                 .map_err(|e| io::Error::other(format!("SNP report JSON serialization: {e}")))?;
@@ -452,8 +452,8 @@ pub fn build_tee_only_payload_from_evidence(
         }
     };
     let payload = serde_json::json!({
-        evidence_field: STANDARD.encode(evidence_bytes),
-        "runtimeData": {"data": STANDARD.encode(&runtime_data), "dataType": "JSON"}
+        evidence_field: URL_SAFE_NO_PAD.encode(evidence_bytes),
+        "runtimeData": {"data": URL_SAFE_NO_PAD.encode(&runtime_data), "dataType": "JSON"}
     });
     Ok((payload.to_string(), rtype))
 }
@@ -465,7 +465,7 @@ pub fn build_tee_only_payload_from_evidence(
 /// pre-collected [`CvmEvidence`](crate::client::CvmEvidence) and avoids
 /// duplicating evidence collection.
 pub fn build_tee_only_payload(tpm: &Tpm) -> io::Result<(String, crate::report::CvmReportType)> {
-    use base64::engine::general_purpose::STANDARD;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     let raw = crate::tpm::attestation::get_cvm_report_raw(tpm, None)?;
     let (parsed, _claims) = crate::report::CvmAttestationReport::parse_with_runtime_claims(&raw)?;
     let rtype = parsed.runtime_claims_header.report_type;
@@ -476,8 +476,8 @@ pub fn build_tee_only_payload(tpm: &Tpm) -> io::Result<(String, crate::report::C
             let imds = ImdsClient::new();
             let vcek_chain = imds.get_vcek_chain()?;
             let snp_report_json = serde_json::json!({
-                "SnpReport": STANDARD.encode(snp_slice),
-                "VcekCertChain": STANDARD.encode(&vcek_chain)
+                "SnpReport": URL_SAFE_NO_PAD.encode(snp_slice),
+                "VcekCertChain": URL_SAFE_NO_PAD.encode(&vcek_chain)
             });
             let snp_bytes = serde_json::to_vec(&snp_report_json)
                 .map_err(|e| io::Error::other(format!("SNP report JSON serialization: {e}")))?;
@@ -496,8 +496,8 @@ pub fn build_tee_only_payload(tpm: &Tpm) -> io::Result<(String, crate::report::C
         }
     };
     let payload = serde_json::json!({
-        evidence_field: STANDARD.encode(evidence_bytes),
-        "runtimeData": {"data": STANDARD.encode(&runtime_data), "dataType": "JSON"}
+        evidence_field: URL_SAFE_NO_PAD.encode(evidence_bytes),
+        "runtimeData": {"data": URL_SAFE_NO_PAD.encode(&runtime_data), "dataType": "JSON"}
     });
     Ok((payload.to_string(), rtype))
 }
@@ -1651,7 +1651,7 @@ mod tests {
     fn build_tee_only_payload_tdx_with_platform_quote() {
         use crate::client::CvmEvidence;
         use crate::report::CvmReportType;
-        use base64::engine::general_purpose::STANDARD;
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
         let td_quote = vec![0xAA; 100];
         let evidence = CvmEvidence {
             report_type: CvmReportType::TdxVmReport,
@@ -1666,7 +1666,7 @@ mod tests {
         // TDX evidence uses "quote" field
         assert!(v.get("quote").is_some());
         let quote_b64 = v["quote"].as_str().unwrap();
-        let decoded = STANDARD.decode(quote_b64).unwrap();
+        let decoded = URL_SAFE_NO_PAD.decode(quote_b64).unwrap();
         assert_eq!(decoded, td_quote);
     }
 
@@ -1686,7 +1686,7 @@ mod tests {
     fn build_tee_only_payload_snp_with_endorsement() {
         use crate::client::{CvmEvidence, Endorsement, EndorsementKind};
         use crate::report::CvmReportType;
-        use base64::engine::general_purpose::STANDARD;
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
         let evidence = CvmEvidence {
             report_type: CvmReportType::SnpVmReport,
             tee_report: vec![0xAA; crate::report::SNP_VM_REPORT_SIZE],
@@ -1706,10 +1706,10 @@ mod tests {
         assert!(v.get("report").is_some());
         // Decode the report field → inner JSON → VcekCertChain should match
         let report_b64 = v["report"].as_str().unwrap();
-        let report_bytes = STANDARD.decode(report_b64).unwrap();
+        let report_bytes = URL_SAFE_NO_PAD.decode(report_b64).unwrap();
         let inner: serde_json::Value = serde_json::from_slice(&report_bytes).unwrap();
         let vcek_b64 = inner["VcekCertChain"].as_str().unwrap();
-        let vcek_decoded = STANDARD.decode(vcek_b64).unwrap();
+        let vcek_decoded = URL_SAFE_NO_PAD.decode(vcek_b64).unwrap();
         assert_eq!(vcek_decoded, b"provided-vcek-chain");
     }
 
@@ -1745,7 +1745,7 @@ mod tests {
     fn build_tee_only_payload_tdx_auto_fetch_td_quote() {
         use crate::client::CvmEvidence;
         use crate::report::CvmReportType;
-        use base64::engine::general_purpose::STANDARD;
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
         use injectorpp::interface::injector::*;
         let mut injector = InjectorPP::new();
         unsafe {
@@ -1768,7 +1768,7 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&payload).unwrap();
         assert!(v.get("quote").is_some());
         let quote_b64 = v["quote"].as_str().unwrap();
-        let decoded = STANDARD.decode(quote_b64).unwrap();
+        let decoded = URL_SAFE_NO_PAD.decode(quote_b64).unwrap();
         assert_eq!(decoded, vec![0xCC; 128]);
     }
 }
