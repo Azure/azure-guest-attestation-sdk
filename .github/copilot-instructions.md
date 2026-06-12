@@ -6,6 +6,87 @@ state.  Read this file in its entirety before making any changes.
 
 ---
 
+## 0. Engineering Philosophy — Software Fundamentals Still Matter
+
+AI can produce code very fast, but **bad code is more expensive than ever**:
+a codebase that is hard to change is a codebase where AI compounds entropy
+on every iteration.  Optimize for a codebase that is easy to change, easy to
+test, and easy to reason about.  The rules below apply to every task.
+
+### 0.1 Reach a shared design concept before writing code
+
+Do not jump straight to an implementation plan or to editing files.  When
+the user gives you a non-trivial task:
+
+1. **Grill the user**: ask targeted questions until you and the user share
+   the same mental model of the change.  Walk down each branch of the
+   design tree and resolve dependencies between decisions one at a time.
+   Do not invent requirements — surface ambiguity instead.
+2. Only after the design concept is shared, propose a plan or a PRD.  For
+   small changes, go straight to a focused diff; for larger ones, write
+   the plan into the relevant module's README or a scratch note first.
+3. Prefer this over eagerly creating planning artifacts.  An asset created
+   from a misaligned design concept is worse than no asset at all.
+
+### 0.2 Use the project's ubiquitous language
+
+This repo has a precise vocabulary: `Tpm`, `AttestationClient`,
+`MaaProvider`, `ImdsClient`, `attest_guest`, `attest_platform`,
+`submit_tee_only`, `vtpm-tests`, NV index, TEE report, SNP, TDX, MAA, IMDS,
+THIM, CoRIM, endorsement, quote, AK (attestation key), EK (endorsement
+key), etc.  Use these exact terms in code, comments, commit messages, and
+when talking to the user.  Do not invent synonyms.  When introducing a new
+domain concept, name it once and reuse the name everywhere.
+
+### 0.3 Take small, test-driven steps — do not outrun your headlights
+
+The rate of feedback is your speed limit.  Do not produce large diffs and
+then check them at the end.  For each logical change:
+
+1. Write or update a test that expresses the behavior (see §6).
+2. Make the smallest change that makes the test pass.
+3. Run the relevant CI command from §2 (at minimum `cargo fmt`, `cargo
+   clippy --workspace --all-targets -- -D warnings`, and the targeted
+   `cargo test`).
+4. Refactor if needed, then move on.
+
+If a behavior genuinely cannot be unit-tested (see §10), say so explicitly
+and prefer an injectorpp mock or a `vtpm-tests`-gated integration test
+before falling back to "manual only".
+
+### 0.4 Prefer deep modules with simple interfaces
+
+Avoid sprawling shallow modules (many small files each exposing many
+functions).  Prefer a smaller number of **deep modules**: a simple,
+well-considered public interface hiding meaningful implementation
+complexity.  When touching this codebase:
+
+- Design the **interface** carefully (names, types, error variants,
+  invariants, doc comments).  This is the part the rest of the system —
+  and the AI on the next iteration — will see.
+- The implementation behind that interface can be denser; the interface is
+  what protects the rest of the codebase from churn.
+- When you find related logic scattered across shallow helpers, consider
+  consolidating it behind one interface rather than adding another helper.
+- Tests should target the module's public interface, not its internals.
+
+### 0.5 Invest in the design of the system every day
+
+Every change is an opportunity to leave the module slightly better
+designed than you found it.  Do not "just make the change" if it visibly
+degrades the structure (duplicates a concept, leaks an internal type,
+widens an interface unnecessarily, breaks a layering rule).  Call out the
+tension to the user and propose a small refactor instead.
+
+### 0.6 You are the strategic layer
+
+Treat AI-generated edits as tactical: locally correct, globally unaware.
+Your job is the strategic layer — module boundaries, interfaces, the
+ubiquitous language, the test strategy, MSRV and cross-platform
+constraints (§4), and the CI contract (§2).  Never delegate those.
+
+---
+
 ## 1. Repository Overview
 
 | Item | Value |
