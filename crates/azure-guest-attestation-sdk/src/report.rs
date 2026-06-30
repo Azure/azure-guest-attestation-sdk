@@ -198,6 +198,9 @@ pub struct AttestationVmConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_time: Option<i64>,
     /// Thumbprint of the root certificate.
+    ///
+    /// Absent on some platforms/host versions; defaults to an empty string.
+    #[serde(default)]
     pub root_cert_thumbprint: String,
     /// Whether the serial console is enabled.
     pub console_enabled: bool,
@@ -206,9 +209,17 @@ pub struct AttestationVmConfig {
     /// Whether the vTPM is enabled.
     pub tpm_enabled: bool,
     /// Whether the vTPM state is persisted.
-    pub tpm_persisted: bool,
+    ///
+    /// Absent on some platforms/host versions; `None` when not reported (which
+    /// is distinct from an explicit `false`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tpm_persisted: Option<bool>,
     /// Whether filtered vPCI devices are allowed.
-    pub filtered_vpci_devices_allowed: bool,
+    ///
+    /// Absent on some platforms/host versions; `None` when not reported (which
+    /// is distinct from an explicit `false`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filtered_vpci_devices_allowed: Option<bool>,
     /// Unique identifier for this VM instance.
     #[serde(rename = "vmUniqueId")]
     pub vm_unique_id: String,
@@ -297,6 +308,29 @@ mod tests {
         assert_eq!(claims.keys[0].kid, "HCLAkPub");
         assert_eq!(claims.keys[0].e, "AQAB");
         assert_eq!(claims.keys[0].n, "0vx7agoebGcQ");
+    }
+
+    #[test]
+    fn parse_report_vm_configuration_missing_optional_fields() {
+        // Real-world SNP reports omit `root-cert-thumbprint`, `tpm-persisted`,
+        // and `filtered-vpci-devices-allowed` from `vm-configuration`. These
+        // must not cause runtime-claims parsing to fail.
+        let fixed = vec![0u8; size_of::<CvmAttestationReport>() - size_of::<u32>()];
+        let json = br#"{"keys":[{"kid":"HCLAkPub","key_ops":["sign"],"kty":"RSA","e":"AQAB","n":"0vx7agoebGcQ"}],"vm-configuration":{"console-enabled":true,"secure-boot":true,"tpm-enabled":true,"vmUniqueId":"F26C0C6F-BE6B-4DC4-9D41-990911B067C0"},"user-data":"00"}"#;
+        let mut buf = fixed;
+        buf.extend_from_slice(&(json.len() as u32).to_le_bytes());
+        buf.extend_from_slice(json);
+        let (_, claims) = CvmAttestationReport::parse_with_runtime_claims(&buf).expect("parse");
+        let claims = claims.expect("claims should parse despite missing optional fields");
+        let cfg = &claims.vm_configuration;
+        assert!(cfg.console_enabled);
+        assert!(cfg.secure_boot);
+        assert!(cfg.tpm_enabled);
+        assert_eq!(cfg.vm_unique_id, "F26C0C6F-BE6B-4DC4-9D41-990911B067C0");
+        // Defaulted fields: absent in the JSON, so distinguishable from false.
+        assert_eq!(cfg.root_cert_thumbprint, "");
+        assert_eq!(cfg.tpm_persisted, None);
+        assert_eq!(cfg.filtered_vpci_devices_allowed, None);
     }
 
     #[test]
