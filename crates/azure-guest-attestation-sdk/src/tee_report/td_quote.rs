@@ -756,6 +756,15 @@ fn append_certification(out: &mut String, cert: &TdQuoteCertification<'_>) {
 
 fn append_pck_cert_chain(out: &mut String, chain: &TdQuotePckCertChain<'_>) {
     fmt_pem_or_hex(out, "  pck_cert_chain", chain.cert_chain);
+    match first_certificate_der(chain.cert_chain).and_then(|der| extract_fmspc_from_cert_der(&der))
+    {
+        Ok(fmspc) => {
+            let _ = writeln!(out, "  fmspc: {}", hex_encode(fmspc));
+        }
+        Err(err) => {
+            let _ = writeln!(out, "  fmspc: <unavailable: {err}>");
+        }
+    }
     if let Some(identity) = chain.qe_identity {
         fmt_utf8_or_hex(out, "  qe_identity", identity);
     }
@@ -1035,6 +1044,266 @@ fn read_signature<'a>(
     *cursor += sig_len;
     let remainder = &bytes[*cursor..];
     Ok((declared_len, signature_data, remainder))
+}
+
+/// Length in bytes of an FMSPC (Family/Model/Stepping/Platform/CustomSKU) value.
+pub const FMSPC_LEN: usize = 6;
+
+/// DER-encoded Intel SGX certificate extension OID (`1.2.840.113741.1.13.1`).
+const OID_INTEL_SGX_EXTENSION: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF8, 0x4D, 0x01, 0x0D, 0x01];
+
+/// DER-encoded FMSPC OID (`1.2.840.113741.1.13.1.4`) inside the SGX extension.
+const OID_INTEL_SGX_FMSPC: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF8, 0x4D, 0x01, 0x0D, 0x01, 0x04];
+
+const DER_TAG_BOOLEAN: u8 = 0x01;
+const DER_TAG_OID: u8 = 0x06;
+const DER_TAG_OCTET_STRING: u8 = 0x04;
+const DER_TAG_SEQUENCE: u8 = 0x30;
+const DER_TAG_CONTEXT_3_EXPLICIT: u8 = 0xA3;
+
+/// Errors returned when extracting an FMSPC from a TD quote.
+#[derive(Debug)]
+pub enum FmspcExtractError {
+    /// The quote did not carry an ECDSA PCK certificate chain.
+    NoPckCertChain,
+    /// The PCK certificate chain payload was not valid PEM or DER.
+    InvalidCertChain,
+    /// The PCK leaf certificate could not be walked as a DER X.509 structure.
+    InvalidCertificate(&'static str),
+    /// The PCK leaf certificate did not carry the Intel SGX extension.
+    NoSgxExtension,
+    /// The Intel SGX extension did not contain an FMSPC entry.
+    NoFmspc,
+    /// The FMSPC value had an unexpected length (Intel mandates 6 bytes).
+    InvalidFmspcLength(usize),
+}
+
+impl fmt::Display for FmspcExtractError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FmspcExtractError::NoPckCertChain => {
+                f.write_str("quote does not carry an ECDSA PCK certificate chain")
+            }
+            FmspcExtractError::InvalidCertChain => {
+                f.write_str("PCK certificate chain is not valid PEM or DER")
+            }
+            FmspcExtractError::InvalidCertificate(what) => {
+                write!(f, "malformed PCK certificate ({what})")
+            }
+            FmspcExtractError::NoSgxExtension => {
+                f.write_str("PCK leaf certificate has no Intel SGX extension")
+            }
+            FmspcExtractError::NoFmspc => f.write_str("Intel SGX extension has no FMSPC entry"),
+            FmspcExtractError::InvalidFmspcLength(n) => {
+                write!(f, "FMSPC has length {n}, expected {FMSPC_LEN}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for FmspcExtractError {}
+
+impl ParsedTdQuote<'_> {
+    /// Returns the raw PCK certificate chain bytes (PEM or DER) embedded in
+    /// the quote, when present.
+    pub fn pck_cert_chain(&self) -> Option<&[u8]> {
+        let sig = self.signature.as_ref()?;
+        let TdQuoteCertification::EcdsaSigAux(ecdsa) = sig.certification.as_ref()? else {
+            return None;
+        };
+        match ecdsa.nested_certification.as_ref()? {
+            TdQuoteEcdsaNestedCertification::PckCertChain(chain) => Some(chain.cert_chain),
+            TdQuoteEcdsaNestedCertification::Raw { .. } => None,
+        }
+    }
+
+    /// Extracts the 6-byte FMSPC from the leaf PCK certificate in the quote's
+    /// certification data.
+    ///
+    /// The FMSPC identifies the platform SKU and is the canonical input for
+    /// resolving the silicon generation (e.g. EMR vs GNR) via Intel PCS or
+    /// Azure THIM TCB Info.
+    pub fn fmspc(&self) -> Result<[u8; FMSPC_LEN], FmspcExtractError> {
+        let chain = self
+            .pck_cert_chain()
+            .ok_or(FmspcExtractError::NoPckCertChain)?;
+        let leaf = first_certificate_der(chain)?;
+        extract_fmspc_from_cert_der(&leaf)
+    }
+}
+
+/// Returns the DER bytes of the first certificate in a PEM or DER chain.
+fn first_certificate_der(chain: &[u8]) -> Result<Vec<u8>, FmspcExtractError> {
+    const BEGIN: &str = "-----BEGIN CERTIFICATE-----";
+    const END: &str = "-----END CERTIFICATE-----";
+
+    if let Ok(text) = str::from_utf8(chain) {
+        if let Some(begin) = text.find(BEGIN) {
+            let body_start = begin + BEGIN.len();
+            let end_rel = text[body_start..]
+                .find(END)
+                .ok_or(FmspcExtractError::InvalidCertChain)?;
+            let b64_body: String = text[body_start..body_start + end_rel]
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect();
+            use base64::Engine;
+            return base64::engine::general_purpose::STANDARD
+                .decode(b64_body.as_bytes())
+                .map_err(|_| FmspcExtractError::InvalidCertChain);
+        }
+    }
+
+    if chain.first() != Some(&DER_TAG_SEQUENCE) {
+        return Err(FmspcExtractError::InvalidCertChain);
+    }
+    let (len, len_size) =
+        read_der_length(&chain[1..]).map_err(|_| FmspcExtractError::InvalidCertChain)?;
+    let total = 1 + len_size + len;
+    if chain.len() < total {
+        return Err(FmspcExtractError::InvalidCertChain);
+    }
+    Ok(chain[..total].to_vec())
+}
+
+fn extract_fmspc_from_cert_der(cert_der: &[u8]) -> Result<[u8; FMSPC_LEN], FmspcExtractError> {
+    let mut outer = DerReader::new(cert_der);
+    let cert_inner = outer.expect_tag(DER_TAG_SEQUENCE, "Certificate SEQUENCE")?;
+
+    let mut cert = DerReader::new(cert_inner);
+    let tbs_inner = cert.expect_tag(DER_TAG_SEQUENCE, "TBSCertificate SEQUENCE")?;
+
+    let extensions_outer = {
+        let mut tbs = DerReader::new(tbs_inner);
+        let mut found = None;
+        while !tbs.is_empty() {
+            let (tag, value) = tbs.read_tlv()?;
+            if tag == DER_TAG_CONTEXT_3_EXPLICIT {
+                found = Some(value);
+                break;
+            }
+        }
+        found.ok_or(FmspcExtractError::NoSgxExtension)?
+    };
+
+    let mut wrapper = DerReader::new(extensions_outer);
+    let extensions_seq = wrapper.expect_tag(DER_TAG_SEQUENCE, "Extensions SEQUENCE")?;
+
+    let mut exts = DerReader::new(extensions_seq);
+    while !exts.is_empty() {
+        let (tag, ext_value) = exts.read_tlv()?;
+        if tag != DER_TAG_SEQUENCE {
+            return Err(FmspcExtractError::InvalidCertificate(
+                "expected Extension SEQUENCE",
+            ));
+        }
+        let mut ext = DerReader::new(ext_value);
+        let oid_bytes = ext.expect_tag(DER_TAG_OID, "Extension OID")?;
+        if oid_bytes != OID_INTEL_SGX_EXTENSION {
+            continue;
+        }
+
+        let (mut next_tag, mut next_value) = ext.read_tlv()?;
+        if next_tag == DER_TAG_BOOLEAN {
+            let (t, v) = ext.read_tlv()?;
+            next_tag = t;
+            next_value = v;
+        }
+        if next_tag != DER_TAG_OCTET_STRING {
+            return Err(FmspcExtractError::InvalidCertificate(
+                "expected OCTET STRING extnValue",
+            ));
+        }
+
+        let mut sgx_reader = DerReader::new(next_value);
+        let entries = sgx_reader.expect_tag(DER_TAG_SEQUENCE, "SGX extension SEQUENCE")?;
+
+        let mut entries = DerReader::new(entries);
+        while !entries.is_empty() {
+            let (entry_tag, entry_value) = entries.read_tlv()?;
+            if entry_tag != DER_TAG_SEQUENCE {
+                return Err(FmspcExtractError::InvalidCertificate(
+                    "expected SGX entry SEQUENCE",
+                ));
+            }
+            let mut entry = DerReader::new(entry_value);
+            let entry_oid = entry.expect_tag(DER_TAG_OID, "SGX entry OID")?;
+            if entry_oid != OID_INTEL_SGX_FMSPC {
+                continue;
+            }
+            let value = entry.expect_tag(DER_TAG_OCTET_STRING, "FMSPC OCTET STRING")?;
+            if value.len() != FMSPC_LEN {
+                return Err(FmspcExtractError::InvalidFmspcLength(value.len()));
+            }
+            let mut out = [0u8; FMSPC_LEN];
+            out.copy_from_slice(value);
+            return Ok(out);
+        }
+        return Err(FmspcExtractError::NoFmspc);
+    }
+
+    Err(FmspcExtractError::NoSgxExtension)
+}
+
+struct DerReader<'a> {
+    bytes: &'a [u8],
+}
+
+impl<'a> DerReader<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    fn read_tlv(&mut self) -> Result<(u8, &'a [u8]), FmspcExtractError> {
+        if self.bytes.is_empty() {
+            return Err(FmspcExtractError::InvalidCertificate("truncated TLV"));
+        }
+        let tag = self.bytes[0];
+        let (len, len_size) = read_der_length(&self.bytes[1..])?;
+        let header = 1 + len_size;
+        if self.bytes.len() < header + len {
+            return Err(FmspcExtractError::InvalidCertificate("truncated value"));
+        }
+        let value = &self.bytes[header..header + len];
+        self.bytes = &self.bytes[header + len..];
+        Ok((tag, value))
+    }
+
+    fn expect_tag(
+        &mut self,
+        expected: u8,
+        what: &'static str,
+    ) -> Result<&'a [u8], FmspcExtractError> {
+        let (tag, value) = self.read_tlv()?;
+        if tag != expected {
+            return Err(FmspcExtractError::InvalidCertificate(what));
+        }
+        Ok(value)
+    }
+}
+
+fn read_der_length(bytes: &[u8]) -> Result<(usize, usize), FmspcExtractError> {
+    if bytes.is_empty() {
+        return Err(FmspcExtractError::InvalidCertificate("missing DER length"));
+    }
+    let first = bytes[0];
+    if first < 0x80 {
+        Ok((first as usize, 1))
+    } else {
+        let n = (first & 0x7F) as usize;
+        if n == 0 || n > core::mem::size_of::<usize>() || bytes.len() < 1 + n {
+            return Err(FmspcExtractError::InvalidCertificate("invalid DER length"));
+        }
+        let mut len: usize = 0;
+        for &b in &bytes[1..1 + n] {
+            len = (len << 8) | b as usize;
+        }
+        Ok((len, 1 + n))
+    }
 }
 
 #[cfg(test)]
@@ -1339,6 +1608,222 @@ mod tests {
             rtmr2: [0u8; 48],
             rtmr3: [0u8; 48],
             report_data: [0u8; 64],
+        }
+    }
+
+    fn der_tlv(tag: u8, content: &[u8]) -> Vec<u8> {
+        let mut v = vec![tag];
+        let len = content.len();
+        if len < 0x80 {
+            v.push(len as u8);
+        } else if len <= 0xFF {
+            v.push(0x81);
+            v.push(len as u8);
+        } else if len <= 0xFFFF {
+            v.push(0x82);
+            v.push((len >> 8) as u8);
+            v.push(len as u8);
+        } else {
+            panic!("test cert too large");
+        }
+        v.extend_from_slice(content);
+        v
+    }
+
+    /// Build a minimal X.509 DER cert that contains the Intel SGX extension
+    /// with the given FMSPC. The structure is intentionally stripped down to
+    /// only what the FMSPC walker needs (outer Certificate SEQUENCE wrapping
+    /// a TBSCertificate that exposes the `[3] EXPLICIT` extensions block).
+    fn build_cert_with_fmspc(fmspc: [u8; FMSPC_LEN]) -> Vec<u8> {
+        let fmspc_entry = {
+            let mut e = Vec::new();
+            e.extend_from_slice(&der_tlv(DER_TAG_OID, OID_INTEL_SGX_FMSPC));
+            e.extend_from_slice(&der_tlv(DER_TAG_OCTET_STRING, &fmspc));
+            der_tlv(DER_TAG_SEQUENCE, &e)
+        };
+        let sgx_seq = der_tlv(DER_TAG_SEQUENCE, &fmspc_entry);
+
+        let sgx_ext = {
+            let mut e = Vec::new();
+            e.extend_from_slice(&der_tlv(DER_TAG_OID, OID_INTEL_SGX_EXTENSION));
+            e.extend_from_slice(&der_tlv(DER_TAG_OCTET_STRING, &sgx_seq));
+            der_tlv(DER_TAG_SEQUENCE, &e)
+        };
+        let extensions = der_tlv(DER_TAG_SEQUENCE, &sgx_ext);
+        let tagged_extensions = der_tlv(DER_TAG_CONTEXT_3_EXPLICIT, &extensions);
+        let tbs = der_tlv(DER_TAG_SEQUENCE, &tagged_extensions);
+
+        let sig_alg = der_tlv(DER_TAG_SEQUENCE, &[]);
+        let sig_value = der_tlv(0x03, &[0x00]);
+
+        let mut cert_inner = Vec::new();
+        cert_inner.extend_from_slice(&tbs);
+        cert_inner.extend_from_slice(&sig_alg);
+        cert_inner.extend_from_slice(&sig_value);
+        der_tlv(DER_TAG_SEQUENCE, &cert_inner)
+    }
+
+    fn cert_to_pem(cert_der: &[u8]) -> String {
+        use base64::Engine;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(cert_der);
+        let mut wrapped = String::new();
+        for chunk in b64.as_bytes().chunks(64) {
+            wrapped.push_str(std::str::from_utf8(chunk).unwrap());
+            wrapped.push('\n');
+        }
+        format!("-----BEGIN CERTIFICATE-----\n{wrapped}-----END CERTIFICATE-----\n")
+    }
+
+    #[test]
+    fn extract_fmspc_from_synthetic_der_cert() {
+        let want = [0x30, 0xC0, 0x6F, 0x00, 0x00, 0x00];
+        let cert = build_cert_with_fmspc(want);
+        let got = extract_fmspc_from_cert_der(&cert).expect("fmspc");
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn first_certificate_der_unwraps_pem() {
+        let want = [0xAA; FMSPC_LEN];
+        let cert = build_cert_with_fmspc(want);
+        let pem = cert_to_pem(&cert);
+        let extracted = first_certificate_der(pem.as_bytes()).expect("first cert");
+        assert_eq!(extracted, cert);
+    }
+
+    #[test]
+    fn first_certificate_der_passes_through_raw_der() {
+        let cert = build_cert_with_fmspc([1, 2, 3, 4, 5, 6]);
+        let mut buf = cert.clone();
+        // Append a second cert's bytes; the helper should only return the first TLV.
+        buf.extend_from_slice(&build_cert_with_fmspc([9; FMSPC_LEN]));
+        let first = first_certificate_der(&buf).expect("first der");
+        assert_eq!(first, cert);
+    }
+
+    #[test]
+    fn fmspc_extraction_rejects_wrong_length() {
+        // Build a cert whose FMSPC OCTET STRING is 4 bytes instead of 6.
+        let fmspc_entry = {
+            let mut e = Vec::new();
+            e.extend_from_slice(&der_tlv(DER_TAG_OID, OID_INTEL_SGX_FMSPC));
+            e.extend_from_slice(&der_tlv(DER_TAG_OCTET_STRING, &[0u8; 4]));
+            der_tlv(DER_TAG_SEQUENCE, &e)
+        };
+        let sgx_seq = der_tlv(DER_TAG_SEQUENCE, &fmspc_entry);
+        let sgx_ext = {
+            let mut e = Vec::new();
+            e.extend_from_slice(&der_tlv(DER_TAG_OID, OID_INTEL_SGX_EXTENSION));
+            e.extend_from_slice(&der_tlv(DER_TAG_OCTET_STRING, &sgx_seq));
+            der_tlv(DER_TAG_SEQUENCE, &e)
+        };
+        let extensions = der_tlv(DER_TAG_SEQUENCE, &sgx_ext);
+        let tagged_extensions = der_tlv(DER_TAG_CONTEXT_3_EXPLICIT, &extensions);
+        let tbs = der_tlv(DER_TAG_SEQUENCE, &tagged_extensions);
+        let sig_alg = der_tlv(DER_TAG_SEQUENCE, &[]);
+        let sig_value = der_tlv(0x03, &[0x00]);
+        let mut inner = Vec::new();
+        inner.extend_from_slice(&tbs);
+        inner.extend_from_slice(&sig_alg);
+        inner.extend_from_slice(&sig_value);
+        let cert = der_tlv(DER_TAG_SEQUENCE, &inner);
+        match extract_fmspc_from_cert_der(&cert) {
+            Err(FmspcExtractError::InvalidFmspcLength(4)) => {}
+            other => panic!("expected InvalidFmspcLength(4), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fmspc_extraction_reports_missing_sgx_extension() {
+        // Cert with an extensions block but no SGX extension OID.
+        let other_ext = {
+            let mut e = Vec::new();
+            // arbitrary OID: 2.5.29.17 (subject alt name) — 0x55, 0x1D, 0x11
+            e.extend_from_slice(&der_tlv(DER_TAG_OID, &[0x55, 0x1D, 0x11]));
+            e.extend_from_slice(&der_tlv(DER_TAG_OCTET_STRING, &[]));
+            der_tlv(DER_TAG_SEQUENCE, &e)
+        };
+        let extensions = der_tlv(DER_TAG_SEQUENCE, &other_ext);
+        let tagged_extensions = der_tlv(DER_TAG_CONTEXT_3_EXPLICIT, &extensions);
+        let tbs = der_tlv(DER_TAG_SEQUENCE, &tagged_extensions);
+        let cert = der_tlv(DER_TAG_SEQUENCE, &tbs);
+        match extract_fmspc_from_cert_der(&cert) {
+            Err(FmspcExtractError::NoSgxExtension) => {}
+            other => panic!("expected NoSgxExtension, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parsed_td_quote_fmspc_round_trip() {
+        let header = TdQuoteHeader {
+            version: 5,
+            attestation_key_type: 2,
+            tee_type: 0x0000_0081,
+            qe_svn: 0,
+            pce_svn: 0,
+            qe_vendor_id: [0u8; 16],
+            user_data: [0u8; 20],
+            body_type: TdQuoteBodyType::Tdx10 as u16,
+            body_size: TD_QUOTE_BODY_V1_0_SIZE as u32,
+        };
+        let body = zero_tdx10_body();
+
+        let want_fmspc = [0x10, 0xA0, 0x6B, 0x00, 0x00, 0x00];
+        let pck_pem = cert_to_pem(&build_cert_with_fmspc(want_fmspc));
+        let pck_chain_bytes = pck_pem.as_bytes();
+
+        let mut sig_blob = Vec::new();
+        sig_blob.extend_from_slice(&[0xAA; SGX_ECDSA_SIGNATURE_SIZE]);
+        sig_blob.extend_from_slice(&[0xBB; SGX_EC_P256_POINT_SIZE]);
+
+        let mut cert_payload = Vec::new();
+        cert_payload.extend_from_slice(&[0x11; SGX_REPORT_BODY_SIZE]);
+        cert_payload.extend_from_slice(&[0x22; SGX_ECDSA_SIGNATURE_SIZE]);
+        cert_payload.extend_from_slice(&u16::to_le_bytes(0));
+        cert_payload.extend_from_slice(&SGX_QL_CERT_KEY_TYPE_PCK_CERT_CHAIN.to_le_bytes());
+        cert_payload.extend_from_slice(&(pck_chain_bytes.len() as u32).to_le_bytes());
+        cert_payload.extend_from_slice(pck_chain_bytes);
+
+        sig_blob.extend_from_slice(&SGX_QL_CERT_KEY_TYPE_ECDSA_SIG_AUX_DATA.to_le_bytes());
+        sig_blob.extend_from_slice(&(cert_payload.len() as u32).to_le_bytes());
+        sig_blob.extend_from_slice(&cert_payload);
+
+        let mut quote = Vec::new();
+        append_header_bytes(&mut quote, &header);
+        quote.extend_from_slice(as_bytes(&body));
+        quote.extend_from_slice(&(sig_blob.len() as u32).to_le_bytes());
+        quote.extend_from_slice(&sig_blob);
+
+        let parsed = parse_td_quote(&quote).expect("parse quote");
+        assert_eq!(parsed.pck_cert_chain(), Some(pck_chain_bytes));
+        assert_eq!(parsed.fmspc().expect("fmspc"), want_fmspc);
+    }
+
+    #[test]
+    fn parsed_td_quote_fmspc_missing_chain() {
+        let header = TdQuoteHeader {
+            version: 5,
+            attestation_key_type: 2,
+            tee_type: 0x0000_0081,
+            qe_svn: 0,
+            pce_svn: 0,
+            qe_vendor_id: [0u8; 16],
+            user_data: [0u8; 20],
+            body_type: TdQuoteBodyType::Tdx10 as u16,
+            body_size: TD_QUOTE_BODY_V1_0_SIZE as u32,
+        };
+        let body = zero_tdx10_body();
+
+        let mut quote = Vec::new();
+        append_header_bytes(&mut quote, &header);
+        quote.extend_from_slice(as_bytes(&body));
+        quote.extend_from_slice(&0u32.to_le_bytes());
+
+        let parsed = parse_td_quote(&quote).expect("parse quote");
+        assert!(parsed.pck_cert_chain().is_none());
+        match parsed.fmspc() {
+            Err(FmspcExtractError::NoPckCertChain) => {}
+            other => panic!("expected NoPckCertChain, got {other:?}"),
         }
     }
 }

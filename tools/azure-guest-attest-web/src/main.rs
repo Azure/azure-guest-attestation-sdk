@@ -815,6 +815,9 @@ async fn api_td_quote() -> Json<ApiResponse> {
             Ok(parsed_quote) => {
                 result["pretty"] =
                     serde_json::json!(azure_guest_attestation_sdk::parse::td_quote_pretty(&parsed_quote));
+                if let Ok(fmspc) = parsed_quote.fmspc() {
+                    result["fmspc"] = serde_json::json!(hex::encode(fmspc));
+                }
             }
             Err(e) => {
                 result["parse_error"] = serde_json::json!(format!("{e}"));
