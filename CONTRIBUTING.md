@@ -40,7 +40,10 @@ Thank you for your interest in contributing to the Azure Guest Attestation SDK!
 ### Running Tests
 
 The project uses the **Microsoft TPM 2.0 Reference Implementation** (`ms-tpm-20-ref`)
-as an in-process virtual TPM. This is enabled by the `vtpm-tests` Cargo feature.
+as an in-process virtual TPM. It is activated with the custom `--cfg vtpm_tests`
+flag (set via `RUSTFLAGS`). The reference implementation is pulled only for tests
+(via a cfg-gated dev-dependency and the non-published `azure-tpm-testkit` crate),
+so the published crates never depend on it.
 
 #### Recommended: cargo-nextest
 
@@ -49,13 +52,13 @@ each test gets its own reference TPM instance and all tests execute fully in par
 
 ```bash
 # Quick alias (defined in .cargo/config.toml)
-cargo nt
+RUSTFLAGS="--cfg vtpm_tests" cargo nt
 
 # Explicit form
-cargo nextest run -p azure-guest-attestation-sdk --features vtpm-tests
+RUSTFLAGS="--cfg vtpm_tests" cargo nextest run -p azure-guest-attestation-sdk
 
 # CI profile (with retries)
-cargo nextest run -p azure-guest-attestation-sdk --features vtpm-tests --profile ci
+RUSTFLAGS="--cfg vtpm_tests" cargo nextest run -p azure-guest-attestation-sdk --profile ci
 ```
 
 #### Fallback: cargo test
@@ -66,10 +69,10 @@ so multi-threaded execution is safe (no `--test-threads=1` required).
 
 ```bash
 # Quick alias
-cargo vt
+RUSTFLAGS="--cfg vtpm_tests" cargo vt
 
 # Explicit form
-cargo test -p azure-guest-attestation-sdk --features vtpm-tests --lib
+RUSTFLAGS="--cfg vtpm_tests" cargo test -p azure-guest-attestation-sdk --lib
 ```
 
 #### Unit tests only (no vTPM)
@@ -115,9 +118,9 @@ a single TPM instance within `cargo test`.
 
 - Add tests for new functionality
 - Use descriptive test names with appropriate prefixes:
-  - `vtpm_*` for vTPM integration tests (require `vtpm-tests` feature)
+  - `vtpm_*` for vTPM integration tests (require the `--cfg vtpm_tests` flag)
   - Descriptive names for pure unit tests
-- Gate vTPM tests with `#[cfg(all(test, feature = "vtpm-tests"))]`
+- Gate vTPM tests with `#[cfg(all(test, vtpm_tests))]`
 - Use **unique NV index values** (e.g. `0x0150_XXXX`) to avoid collisions
   with other tests sharing the same TPM instance
 

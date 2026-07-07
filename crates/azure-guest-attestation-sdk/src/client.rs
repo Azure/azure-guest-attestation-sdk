@@ -1121,12 +1121,12 @@ mod tests {
     // AttestationClient method tests (vtpm-tests gated)
     // -----------------------------------------------------------------------
 
-    #[cfg(feature = "vtpm-tests")]
+    #[cfg(vtpm_tests)]
     #[test]
     fn get_cvm_evidence_rejects_user_data_over_64() {
-        use crate::tpm::device::Tpm;
+        use azure_tpm_testkit::reference_tpm;
 
-        let tpm = match Tpm::open_reference() {
+        let tpm = match reference_tpm() {
             Ok(t) => t,
             Err(_) => return,
         };
@@ -1145,12 +1145,12 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "vtpm-tests")]
+    #[cfg(vtpm_tests)]
     #[test]
     fn get_cvm_evidence_accepts_user_data_exactly_64() {
-        use crate::tpm::device::Tpm;
+        use azure_tpm_testkit::reference_tpm;
 
-        let tpm = match Tpm::open_reference() {
+        let tpm = match reference_tpm() {
             Ok(t) => t,
             Err(_) => return,
         };
@@ -1171,12 +1171,12 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "vtpm-tests")]
+    #[cfg(vtpm_tests)]
     #[test]
     fn get_cvm_evidence_accepts_none_user_data() {
-        use crate::tpm::device::Tpm;
+        use azure_tpm_testkit::reference_tpm;
 
-        let tpm = match Tpm::open_reference() {
+        let tpm = match reference_tpm() {
             Ok(t) => t,
             Err(_) => return,
         };
@@ -1191,12 +1191,12 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "vtpm-tests")]
+    #[cfg(vtpm_tests)]
     #[test]
     fn from_tpm_and_tpm_accessor() {
-        use crate::tpm::device::Tpm;
+        use azure_tpm_testkit::reference_tpm;
 
-        let tpm = match Tpm::open_reference() {
+        let tpm = match reference_tpm() {
             Ok(t) => t,
             Err(_) => return,
         };
@@ -1205,12 +1205,12 @@ mod tests {
         let _tpm_ref = client.tpm();
     }
 
-    #[cfg(feature = "vtpm-tests")]
+    #[cfg(vtpm_tests)]
     #[test]
     fn get_device_evidence_default_options() {
-        use crate::tpm::device::Tpm;
+        use azure_tpm_testkit::reference_tpm;
 
-        let tpm = match Tpm::open_reference() {
+        let tpm = match reference_tpm() {
             Ok(t) => t,
             Err(_) => return,
         };

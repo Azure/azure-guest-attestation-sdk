@@ -1,0 +1,21 @@
+[package]
+name = "azure-tpm-testkit"
+version = "0.1.0"
+description = "In-process reference TPM (ms-tpm-20-ref) test harness for azure-tpm. Not published."
+publish = false
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/Azure/azure-guest-attestation-sdk"
+authors = ["Microsoft Azure"]
+rust-version = "1.94"
+
+[lib]
+name = "azure_tpm_testkit"
+
+[dependencies]
+azure-tpm = { path = "../azure-tpm" }
+ms-tpm-20-ref = { git = "https://github.com/microsoft/ms-tpm-20-ref-rs", features = ["vendored"] }
+getrandom = { version = "0.2" }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(vtpm_tests)'] }

@@ -9,11 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - 2026-03-18
 
+Initial release. `azure-tpm` and `azure-guest-attestation-sdk` are publishable
+to crates.io; the reference-TPM test harness (`ms-tpm-20-ref`) is pulled only
+for tests via cfg-gated dev-dependencies and the non-published
+`azure-tpm-testkit` crate, activated with `--cfg vtpm_tests`.
+
 ### Added
 
 - **High-level `AttestationClient` API** — one-shot `attest()` and decomposed
   `get_cvm_evidence()` → `get_device_evidence()` → `create_attestation_report()`
   → `submit_to_provider()` workflow.
+- **`Tpm::from_raw_reference` / `Tpm::is_reference`** on `azure-tpm`, enabling
+  non-hardware (reference/simulator) transports.
 - **TEE-only attestation** via `attest_platform()` / `submit_tee_only()`.
 - **TrustedLaunch VM support** — auto-detected when CVM report NV index is
   absent. `IsolationInfo` carries `vm_type: TrustedLaunch` with no TEE evidence.

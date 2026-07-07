@@ -18,9 +18,7 @@ rust-version.workspace = true
 name = "azure_guest_attestation_sdk"
 
 [dependencies]
-azure-tpm = { path = "../azure-tpm" }
-ms-tpm-20-ref = { git = "https://github.com/microsoft/ms-tpm-20-ref-rs", features = ["vendored"], optional = true }
-getrandom = { version = "0.2", optional = true }
+azure-tpm = { path = "../azure-tpm", version = "0.1.0" }
 bitfield-struct = "0.6"
 
 # Workspace dependencies
@@ -42,11 +40,15 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys.workspace = true
 
-[features]
-default = []
-# Enable in-process reference TPM tests (pulls vendored OpenSSL via ms-tpm-20-ref)
-vtpm-tests = ["ms-tpm-20-ref", "getrandom", "azure-tpm/vtpm-tests"]
+[lints]
+workspace = true
 
 [dev-dependencies]
 num-bigint = "0.4"
 injectorpp = "0.5.0"
+
+# Reference-TPM test harness. Gated behind `--cfg vtpm_tests` so the heavy
+# git-sourced `ms-tpm-20-ref` (vendored OpenSSL) never enters the default
+# build/test graph. Enable with: RUSTFLAGS="--cfg vtpm_tests".
+[target.'cfg(vtpm_tests)'.dev-dependencies]
+azure-tpm-testkit = { path = "../azure-tpm-testkit" }

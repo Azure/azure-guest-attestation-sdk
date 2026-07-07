@@ -1220,20 +1220,20 @@ mod tests {
     // -----------------------------------------------------------------------
     // These tests exercise the format-validation branches that return Ok(None)
     // or Err before the TPM decrypt call is reached.
-    // Gated behind vtpm-tests because `Tpm::open_reference()` is
-    // only available with that feature.
+    // Gated behind `--cfg vtpm_tests` because `reference_tpm()` (the
+    // in-process reference TPM) is only available with that flag.
 
-    #[cfg(feature = "vtpm-tests")]
+    #[cfg(vtpm_tests)]
     fn dummy_tpm_for_parse_token() -> crate::tpm::device::Tpm {
-        crate::tpm::device::Tpm::open_reference().expect("reference TPM for parse_token tests")
+        azure_tpm_testkit::reference_tpm().expect("reference TPM for parse_token tests")
     }
 
-    #[cfg(feature = "vtpm-tests")]
+    #[cfg(vtpm_tests)]
     fn json_to_b64url(v: &serde_json::Value) -> String {
         base64_url_encode(v.to_string().as_bytes())
     }
 
-    #[cfg(feature = "vtpm-tests")]
+    #[cfg(vtpm_tests)]
     #[test]
     fn parse_token_invalid_base64_returns_none() {
         let tpm = dummy_tpm_for_parse_token();
@@ -1241,7 +1241,7 @@ mod tests {
         assert!(result.is_none());
     }
 
-    #[cfg(feature = "vtpm-tests")]
+    #[cfg(vtpm_tests)]
     #[test]
     fn parse_token_non_utf8_returns_none() {
         let tpm = dummy_tpm_for_parse_token();
@@ -1251,7 +1251,7 @@ mod tests {
         assert!(result.is_none());
     }
 
-    #[cfg(feature = "vtpm-tests")]
+    #[cfg(vtpm_tests)]
     #[test]
     fn parse_token_non_json_returns_none() {
         let tpm = dummy_tpm_for_parse_token();
@@ -1260,7 +1260,7 @@ mod tests {
         assert!(result.is_none());
     }
 
-    #[cfg(feature = "vtpm-tests")]
+    #[cfg(vtpm_tests)]
     #[test]
     fn parse_token_missing_encrypted_inner_key_returns_none() {
         let tpm = dummy_tpm_for_parse_token();
@@ -1273,7 +1273,7 @@ mod tests {
         assert!(result.is_none());
     }
 
-    #[cfg(feature = "vtpm-tests")]
+    #[cfg(vtpm_tests)]
     #[test]
     fn parse_token_missing_encryption_params_returns_none() {
         let tpm = dummy_tpm_for_parse_token();
@@ -1286,7 +1286,7 @@ mod tests {
         assert!(result.is_none());
     }
 
-    #[cfg(feature = "vtpm-tests")]
+    #[cfg(vtpm_tests)]
     #[test]
     fn parse_token_missing_iv_returns_none() {
         let tpm = dummy_tpm_for_parse_token();
@@ -1300,7 +1300,7 @@ mod tests {
         assert!(result.is_none());
     }
 
-    #[cfg(feature = "vtpm-tests")]
+    #[cfg(vtpm_tests)]
     #[test]
     fn parse_token_missing_auth_data_returns_none() {
         let tpm = dummy_tpm_for_parse_token();
@@ -1313,7 +1313,7 @@ mod tests {
         assert!(result.is_none());
     }
 
-    #[cfg(feature = "vtpm-tests")]
+    #[cfg(vtpm_tests)]
     #[test]
     fn parse_token_missing_jwt_returns_none() {
         let tpm = dummy_tpm_for_parse_token();
@@ -1326,7 +1326,7 @@ mod tests {
         assert!(result.is_none());
     }
 
-    #[cfg(feature = "vtpm-tests")]
+    #[cfg(vtpm_tests)]
     #[test]
     fn parse_token_bad_iv_length_returns_error() {
         use base64::engine::general_purpose::STANDARD;
@@ -1347,7 +1347,7 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "vtpm-tests")]
+    #[cfg(vtpm_tests)]
     #[test]
     fn parse_token_bad_auth_tag_length_returns_error() {
         use base64::engine::general_purpose::STANDARD;
@@ -1368,7 +1368,7 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "vtpm-tests")]
+    #[cfg(vtpm_tests)]
     #[test]
     fn parse_token_empty_json_object_returns_none() {
         let tpm = dummy_tpm_for_parse_token();
@@ -1377,7 +1377,7 @@ mod tests {
         assert!(result.is_none());
     }
 
-    #[cfg(feature = "vtpm-tests")]
+    #[cfg(vtpm_tests)]
     #[test]
     fn parse_token_non_string_fields_return_none() {
         let tpm = dummy_tpm_for_parse_token();

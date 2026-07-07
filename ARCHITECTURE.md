@@ -147,7 +147,7 @@ The `parse` module contains pure functions that operate on byte slices — no TP
 
 ### vTPM singleton for tests
 
-Tests that use the in-process reference TPM (`vtpm-tests` feature) share a single `OnceLock<Mutex<...>>` singleton. This allows full parallelism under `cargo nextest` (process-per-test) while remaining safe under `cargo test` (shared process with mutex serialization).
+Tests that use the in-process reference TPM (activated with `--cfg vtpm_tests`) share a single `OnceLock<Mutex<...>>` singleton. This allows full parallelism under `cargo nextest` (process-per-test) while remaining safe under `cargo test` (shared process with mutex serialization). The reference implementation is pulled only for tests — via a cfg-gated dev-dependency in `azure-tpm` and the non-published `azure-tpm-testkit` crate for downstream crates — so the published crates never depend on it.
 
 ## TPM Access
 
@@ -155,7 +155,7 @@ Tests that use the in-process reference TPM (`vtpm-tests` feature) share a singl
 |----------|--------|-------|
 | Linux | `/dev/tpmrm0` → `/dev/tpm0` | Kernel resource manager preferred |
 | Windows | TBS (TPM Base Services) | Via `windows-sys` crate |
-| Tests | `ms-tpm-20-ref` (in-process) | Feature-gated behind `vtpm-tests` |
+| Tests | `ms-tpm-20-ref` (in-process) | Activated with `--cfg vtpm_tests` |
 
 ## Future Work
 

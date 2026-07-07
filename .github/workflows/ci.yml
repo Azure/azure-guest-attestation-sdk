@@ -117,7 +117,9 @@ jobs:
         uses: taiki-e/install-action@nextest
 
       - name: Run vTPM tests (nextest)
-        run: cargo nextest run -p azure-guest-attestation-sdk --features vtpm-tests
+        run: cargo nextest run -p azure-guest-attestation-sdk
+        env:
+          RUSTFLAGS: --cfg vtpm_tests
 
   # --------------------------------------------------------------------------
   # MSRV check (skipped on doc-only changes)
@@ -166,8 +168,10 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
       - name: Run tests and check coverage threshold
+        env:
+          RUSTFLAGS: --cfg vtpm_tests
         run: |
-          cargo llvm-cov --workspace --features vtpm-tests \
+          cargo llvm-cov --workspace \
             --ignore-filename-regex '(src/lib\.rs|azure-guest-attest/src/main\.rs)$' \
             --fail-under-lines 60
 

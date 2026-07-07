@@ -77,8 +77,8 @@ Use the clean scripts to verify your `.gitignore` is working correctly.
 
 1. **Initial setup**: Run `setup.ps1` or `setup.sh`
 2. **Build**: `cargo build` (or `cargo build --release`)
-3. **Test**: `cargo nt` (nextest with vTPM) or `cargo vt` (built-in runner)
-4. **Lint**: `cargo clippy -p azure-guest-attestation-sdk --features vtpm-tests --all-targets -- -D warnings`
+3. **Test**: `RUSTFLAGS="--cfg vtpm_tests" cargo nt` (nextest with vTPM) or `cargo vt` (built-in runner)
+4. **Lint**: `cargo clippy -p azure-guest-attestation-sdk --all-targets -- -D warnings`
 5. **Cleanup**: Run `clean.ps1` or `clean.sh` to remove artifacts
 
 ## Requirements

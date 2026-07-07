@@ -8,9 +8,6 @@ use unix::Tpm as TpmInner;
 #[cfg(windows)]
 use windows::Tpm as TpmInner;
 
-#[cfg(feature = "vtpm-tests")]
-use vtpm::RefTpm;
-
 /// Simple cross-platform TPM access (Linux: /dev/tpmrm0|/dev/tpm0, Windows: TBS).
 /// Blocking, minimal. All transmit calls are serialized via internal Mutex.
 ///
@@ -36,8 +33,8 @@ enum Inner {
     Unix(TpmInner),
     #[cfg(windows)]
     Windows(TpmInner),
-    #[cfg(feature = "vtpm-tests")]
-    Ref(RefTpm),
+    /// A non-hardware transport (e.g. an in-process reference/simulator TPM).
+    Reference(Box<dyn RawTpm + Send + Sync>),
 }
 
 impl Tpm {
@@ -103,22 +100,27 @@ impl Tpm {
             Inner::Unix(u) => u.transmit(command),
             #[cfg(windows)]
             Inner::Windows(w) => w.transmit(command),
-            #[cfg(feature = "vtpm-tests")]
-            Inner::Ref(r) => r.transmit(command),
+            Inner::Reference(r) => r.transmit_raw(command),
         }
     }
 }
 
 impl Tpm {
-    /// Returns true if this TPM handle is backed by the in-process reference implementation.
-    #[cfg(feature = "vtpm-tests")]
-    pub fn is_reference(&self) -> bool {
-        matches!(self.inner, Inner::Ref(_))
+    /// Construct a [`Tpm`] backed by an arbitrary [`RawTpm`] transport.
+    ///
+    /// This is the extension point for non-hardware TPMs, such as an
+    /// in-process reference implementation or a simulator used in tests.
+    /// The resulting handle reports `true` from [`Tpm::is_reference`].
+    pub fn from_raw_reference(raw: Box<dyn RawTpm + Send + Sync>) -> Self {
+        Tpm {
+            inner: Inner::Reference(raw),
+        }
     }
-    /// Returns true if this TPM handle is backed by the in-process reference implementation.
-    #[cfg(not(feature = "vtpm-tests"))]
+
+    /// Returns true if this TPM handle is backed by a non-hardware
+    /// (reference/simulator) transport rather than a platform TPM device.
     pub fn is_reference(&self) -> bool {
-        false
+        matches!(self.inner, Inner::Reference(_))
     }
 }
 
@@ -351,41 +353,30 @@ mod windows {
     }
 }
 
-// ---------------- Reference (in-process) TPM for tests (feature gated) ---------------
+// ---------------------------------------------------------------------------
+// Reference (in-process) TPM harness for THIS crate's own tests.
+//
+// Gated behind `--cfg vtpm_tests` and backed by a cfg-gated dev-dependency on
+// `ms-tpm-20-ref`.  Downstream crates use the standalone `azure-tpm-testkit`
+// crate instead; this crate cannot depend on that testkit (it depends back on
+// `azure-tpm`, forming a dev-dependency cycle), so a small self-contained copy
+// lives here.
 //
 // # Threading model
 //
-// The Microsoft TPM 2.0 Reference Implementation (`ms-tpm-20-ref`) uses global C
-// state internally, so only **one** instance may exist per process.  We therefore
-// keep a process-global singleton behind `OnceLock` and serialize all command
-// execution through a `Mutex`.
-//
-// This design supports three execution models:
-//
-// | Runner | Isolation | Parallelism |
-// |--------|-----------|-------------|
-// | `cargo nextest` (recommended) | process-per-test | fully parallel – each process gets its own singleton |
-// | `cargo test --test-threads=1` | single process, sequential | safe – one test at a time |
-// | `cargo test` (multi-threaded) | single process, shared singleton | safe – Mutex serializes access |
-#[cfg(feature = "vtpm-tests")]
-mod vtpm {
-    use crate::device::Inner;
-    use crate::device::Tpm;
+// The reference implementation uses global C state, so only one instance may
+// exist per process.  We keep a process-global singleton behind `OnceLock` and
+// serialize command execution through a `Mutex`.
+#[cfg(all(test, vtpm_tests))]
+mod reference_harness {
+    use super::{RawTpm, Tpm};
     use std::io;
     use std::sync::{Mutex, OnceLock};
 
-    /// Handle to the shared in-process reference TPM.
-    ///
-    /// Internally this is a lightweight zero-cost handle – the actual TPM state lives
-    /// in a process-global `OnceLock<Mutex<…>>`.  Multiple `RefTpm` / `Tpm` values
-    /// can coexist; all transmit calls are serialized by the inner Mutex.
-    pub struct RefTpm;
+    struct RefTpm;
 
-    /// Process-global shared TPM state, initialized exactly once.
     static SHARED_STATE: OnceLock<Mutex<ms_tpm_20_ref::MsTpm20RefPlatform>> = OnceLock::new();
 
-    /// Initialize the singleton reference TPM (cold-init + Startup(Clear)).
-    /// Panics on failure – acceptable because this is only used in tests.
     fn init_shared_state() -> Mutex<ms_tpm_20_ref::MsTpm20RefPlatform> {
         use ms_tpm_20_ref::{DynResult, InitKind, MsTpm20RefPlatform, PlatformCallbacks};
         use std::time::Instant;
@@ -429,8 +420,8 @@ mod vtpm {
         Mutex::new(inner)
     }
 
-    impl RefTpm {
-        pub fn transmit(&self, command: &[u8]) -> io::Result<Vec<u8>> {
+    impl RawTpm for RefTpm {
+        fn transmit_raw(&self, command: &[u8]) -> io::Result<Vec<u8>> {
             let state = SHARED_STATE.get_or_init(init_shared_state);
             let mut guard = state
                 .lock()
@@ -440,32 +431,15 @@ mod vtpm {
             let sz = guard
                 .execute_command(&mut req, &mut buf)
                 .map_err(|e| io::Error::other(format!("ref tpm exec failed: {e}")))?;
-
             Ok(buf[..sz].to_vec())
         }
     }
 
-    // Public (feature-gated) constructor for the in-process reference TPM so that
-    // integration tests (which compile the library without #[cfg(test)]) can use it.
     impl Tpm {
-        /// Open an in-process reference TPM for integration testing.
-        ///
-        /// Only available when the `vtpm-tests` feature is enabled.
-        pub fn open_reference() -> io::Result<Self> {
-            // Ensure the singleton is initialized (panics on failure).
+        /// Open the in-process reference TPM for this crate's unit tests.
+        pub(crate) fn open_reference_for_tests() -> io::Result<Self> {
             let _ = SHARED_STATE.get_or_init(init_shared_state);
-            Ok(Tpm {
-                inner: Inner::Ref(RefTpm),
-            })
-        }
-    }
-
-    // Retain backwards-compatible test-only name for existing unit tests.
-    #[cfg(all(feature = "vtpm-tests", test))]
-    impl Tpm {
-        /// Alias for [`Tpm::open_reference`] used by unit tests.
-        pub fn open_reference_for_tests() -> io::Result<Self> {
-            Self::open_reference()
+            Ok(Tpm::from_raw_reference(Box::new(RefTpm)))
         }
     }
 }
@@ -552,12 +526,12 @@ mod tests {
     }
 
     /// Choose a TPM instance for tests based on feature + env:
-    ///   CVM_TPM_TEST_MODE=ref -> reference TPM (if feature enabled)
+    ///   CVM_TPM_TEST_MODE=ref -> reference TPM (if enabled)
     ///   CVM_TPM_TEST_MODE=hw  -> hardware TPM
     ///   unset -> prefer reference (if enabled) else hardware.
     fn test_tpm_instance() -> Option<Tpm> {
         let mode = env::var("CVM_TPM_TEST_MODE").ok();
-        #[cfg(feature = "vtpm-tests")]
+        #[cfg(vtpm_tests)]
         {
             if matches!(mode.as_deref(), Some("ref")) {
                 return Tpm::open_reference_for_tests().ok();
@@ -571,7 +545,7 @@ mod tests {
                     .or_else(|| Tpm::open().ok())
             }
         }
-        #[cfg(not(feature = "vtpm-tests"))]
+        #[cfg(not(vtpm_tests))]
         {
             let _ = mode; // silence unused
             Tpm::open().ok()
