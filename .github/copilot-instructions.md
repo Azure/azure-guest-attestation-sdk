@@ -92,7 +92,7 @@ constraints (§4), and the CI contract (§2).  Never delegate those.
 | Item | Value |
 |------|-------|
 | Language | Rust (edition 2021) |
-| MSRV | **1.94** — every change must compile on Rust 1.94 |
+| MSRV | **1.90** — every change must compile on Rust 1.90 |
 | Workspace members | `crates/azure-tpm` (TPM crate), `crates/azure-guest-attestation-sdk` (SDK), `tools/azure-guest-attest` (CLI), `tools/azure-guest-attest-web` (Web tool). `crates/azure-tpm-testkit` is **excluded** from the workspace (reference-TPM test harness, not published). |
 | CI | `.github/workflows/ci.yml` — runs on **both** `ubuntu-latest` and `windows-latest` |
 | Pre-commit hook | `.githooks/pre-commit` — must mirror CI flags exactly |
@@ -148,11 +148,11 @@ RUSTFLAGS="--cfg vtpm_tests" cargo nextest run -p azure-guest-attestation-sdk
 ### 2.5 MSRV check (Linux only)
 
 ```bash
-cargo +1.94 check --workspace
+cargo +1.90 check --workspace
 ```
 
 > Dev-dependencies are excluded from `cargo check`, so newer crates like
-> `injectorpp` are fine as long as the main code compiles on 1.94.
+> `injectorpp` are fine as long as the main code compiles on 1.90.
 
 ### 2.6 Docs
 
@@ -186,7 +186,7 @@ CI tests on **both Linux and Windows**.  Every change must work on both.
 | Rule | Details |
 |------|---------|
 | No Unix-only paths | Use `std::path` / `std::env::consts::OS` — never hardcode `/dev/...` outside `#[cfg(unix)]` |
-| No Unix-only APIs | `io::Error::other()` requires Rust ≥ 1.74 — OK for MSRV 1.94 |
+| No Unix-only APIs | `io::Error::other()` requires Rust ≥ 1.74 — OK for MSRV 1.90 |
 | Windows `#[cfg]` | Windows-specific code must be gated with `#[cfg(target_os = "windows")]` |
 | Line endings | The repo uses LF (`.gitattributes`). Don't introduce CRLF. |
 | Dev-dependencies | Must compile on **all** CI platforms (Linux + Windows). If a dev-dep is platform-specific, gate its usage with `#[cfg(...)]` |
@@ -319,8 +319,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 # 3. Unit tests (no features, parallel)
 cargo test --workspace
 
-# 4. MSRV (if Rust 1.94 toolchain is installed)
-cargo +1.94 check --workspace
+# 4. MSRV (if Rust 1.90 toolchain is installed)
+cargo +1.90 check --workspace
 ```
 
 If you have reference-TPM prerequisites (Perl, C toolchain):

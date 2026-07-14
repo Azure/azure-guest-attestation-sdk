@@ -14,6 +14,8 @@ to crates.io; the reference-TPM test harness (`ms-tpm-20-ref`) is pulled only
 for tests via cfg-gated dev-dependencies and the non-published
 `azure-tpm-testkit` crate, activated with `--cfg vtpm_tests`.
 
+Minimum Supported Rust Version (MSRV): **1.90**.
+
 ### Added
 
 - **High-level `AttestationClient` API** — one-shot `attest()` and decomposed

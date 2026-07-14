@@ -125,13 +125,13 @@ jobs:
   # MSRV check (skipped on doc-only changes)
   # --------------------------------------------------------------------------
   msrv:
-    name: MSRV (Rust 1.94)
+    name: MSRV (Rust 1.90)
     needs: changes
     if: github.event_name == 'push' || needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.94
+      - uses: dtolnay/rust-toolchain@1.90
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace
 

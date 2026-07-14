@@ -35,7 +35,7 @@ edition = "2021"
 license = "MIT"
 repository = "https://github.com/Azure/azure-guest-attestation-sdk"
 authors = ["Microsoft Azure"]
-rust-version = "1.94"
+rust-version = "1.90"
 
 # Shared dependencies - members can use `workspace = true`
 [workspace.dependencies]
