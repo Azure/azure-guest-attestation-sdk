@@ -32,7 +32,7 @@ the user gives you a non-trivial task:
 
 This repo has a precise vocabulary: `Tpm`, `AttestationClient`,
 `MaaProvider`, `ImdsClient`, `attest_guest`, `attest_platform`,
-`submit_tee_only`, `vtpm-tests`, NV index, TEE report, SNP, TDX, MAA, IMDS,
+`submit_tee_only`, `vtpm_tests`, NV index, TEE report, SNP, TDX, MAA, IMDS,
 THIM, CoRIM, endorsement, quote, AK (attestation key), EK (endorsement
 key), etc.  Use these exact terms in code, comments, commit messages, and
 when talking to the user.  Do not invent synonyms.  When introducing a new
@@ -51,7 +51,7 @@ then check them at the end.  For each logical change:
 4. Refactor if needed, then move on.
 
 If a behavior genuinely cannot be unit-tested (see §10), say so explicitly
-and prefer an injectorpp mock or a `vtpm-tests`-gated integration test
+and prefer an injectorpp mock or a `vtpm_tests`-gated integration test
 before falling back to "manual only".
 
 ### 0.4 Prefer deep modules with simple interfaces
@@ -92,8 +92,8 @@ constraints (§4), and the CI contract (§2).  Never delegate those.
 | Item | Value |
 |------|-------|
 | Language | Rust (edition 2021) |
-| MSRV | **1.94** — every change must compile on Rust 1.94 |
-| Workspace members | `crates/azure-tpm` (TPM crate), `crates/azure-guest-attestation-sdk` (SDK), `tools/azure-guest-attest` (CLI), `tools/azure-guest-attest-web` (Web tool) |
+| MSRV | **1.90** — every change must compile on Rust 1.90 |
+| Workspace members | `crates/azure-tpm` (TPM crate), `crates/azure-guest-attestation-sdk` (SDK), `tools/azure-guest-attest` (CLI), `tools/azure-guest-attest-web` (Web tool). `crates/azure-tpm-testkit` is **excluded** from the workspace (reference-TPM test harness, not published). |
 | CI | `.github/workflows/ci.yml` — runs on **both** `ubuntu-latest` and `windows-latest` |
 | Pre-commit hook | `.githooks/pre-commit` — must mirror CI flags exactly |
 
@@ -122,9 +122,9 @@ cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 > **Critical**: Do NOT use `--all-features`.  CI does not pass
-> `--all-features` to clippy.  The `vtpm-tests` feature pulls
-> `ms-tpm-20-ref` (vendored OpenSSL) which requires Perl and a C toolchain;
-> adding `--all-features` will fail on runners that lack those.
+> `--all-features` to clippy.  The reference-TPM harness (activated with
+> `--cfg vtpm_tests`) pulls `ms-tpm-20-ref` (vendored OpenSSL) which requires
+> Perl and a C toolchain; enabling it here will fail on runners that lack those.
 
 ### 2.3 Unit tests — no vTPM (runs on Linux AND Windows)
 
@@ -138,17 +138,21 @@ cargo test --workspace
 ### 2.4 vTPM integration tests (runs on Linux AND Windows)
 
 ```bash
-cargo nextest run -p azure-guest-attestation-sdk --features vtpm-tests
+RUSTFLAGS="--cfg vtpm_tests" cargo nextest run -p azure-guest-attestation-sdk
 ```
+
+> The reference-TPM harness is activated by the custom `--cfg vtpm_tests`
+> flag (NOT a Cargo feature).  It is pulled via cfg-gated dev-dependencies so
+> the published crates never depend on `ms-tpm-20-ref`.
 
 ### 2.5 MSRV check (Linux only)
 
 ```bash
-cargo +1.94 check --workspace
+cargo +1.90 check --workspace
 ```
 
 > Dev-dependencies are excluded from `cargo check`, so newer crates like
-> `injectorpp` are fine as long as the main code compiles on 1.94.
+> `injectorpp` are fine as long as the main code compiles on 1.90.
 
 ### 2.6 Docs
 
@@ -159,7 +163,7 @@ RUSTDOCFLAGS=-Dwarnings cargo doc --workspace --no-deps
 ### 2.7 Coverage (Linux only)
 
 ```bash
-cargo llvm-cov --workspace --features vtpm-tests \
+RUSTFLAGS="--cfg vtpm_tests" cargo llvm-cov --workspace \
   --ignore-filename-regex '(src/lib\.rs|azure-guest-attest/src/main\.rs)$' \
   --fail-under-lines 60
 ```
@@ -182,28 +186,48 @@ CI tests on **both Linux and Windows**.  Every change must work on both.
 | Rule | Details |
 |------|---------|
 | No Unix-only paths | Use `std::path` / `std::env::consts::OS` — never hardcode `/dev/...` outside `#[cfg(unix)]` |
-| No Unix-only APIs | `io::Error::other()` requires Rust ≥ 1.74 — OK for MSRV 1.94 |
+| No Unix-only APIs | `io::Error::other()` requires Rust ≥ 1.74 — OK for MSRV 1.90 |
 | Windows `#[cfg]` | Windows-specific code must be gated with `#[cfg(target_os = "windows")]` |
 | Line endings | The repo uses LF (`.gitattributes`). Don't introduce CRLF. |
 | Dev-dependencies | Must compile on **all** CI platforms (Linux + Windows). If a dev-dep is platform-specific, gate its usage with `#[cfg(...)]` |
 
-## 5. Feature Flags
+## 5. Reference-TPM Harness (`--cfg vtpm_tests`)
 
-| Feature | Purpose | When to gate |
-|---------|---------|--------------|
-| `vtpm-tests` | Pulls `ms-tpm-20-ref` + `getrandom` for in-process reference TPM | Gate test code that calls `Tpm::open_reference_for_tests()` with `#[cfg(feature = "vtpm-tests")]` |
-| (none / default) | Normal SDK functionality | CI clippy + unit tests run without any features |
+The in-process reference TPM is **not** a Cargo feature — it is activated by a
+custom `--cfg vtpm_tests` compile flag, set via `RUSTFLAGS`.  This keeps the
+heavy git-sourced `ms-tpm-20-ref` (vendored OpenSSL, needs Perl + a C
+toolchain) out of the default build graph **and** out of the published crates
+(git dependencies cannot be published to crates.io).
+
+| Config | Purpose | How |
+|--------|---------|-----|
+| `--cfg vtpm_tests` | Reference-TPM tests | `azure-tpm` uses a cfg-gated dev-dependency on `ms-tpm-20-ref` + an in-crate harness (`Tpm::open_reference_for_tests()`). The SDK uses the non-published `azure-tpm-testkit` crate (`azure_tpm_testkit::reference_tpm()`). Gate test code with `#[cfg(vtpm_tests)]`. |
+| (none / default) | Normal SDK functionality | CI clippy + unit tests run without the flag. |
+
+> **Why not a Cargo feature?** Features cannot gate dev-dependencies, and a
+> git dependency (even optional/feature-gated) blocks `cargo publish`.  A
+> `--cfg` toggling a `[target.'cfg(vtpm_tests)'.dev-dependencies]` table is the
+> only mechanism that keeps the heavy dep out of the default graph, out of the
+> published manifest, AND activates it on demand.
+>
+> **`azure-tpm-testkit`** is deliberately **excluded** from the workspace
+> (see root `Cargo.toml` `exclude`) so `cargo build/clippy/test --workspace`
+> never pulls `ms-tpm-20-ref`.  It is compiled only as a cfg-gated
+> dev-dependency of the SDK.  The `unexpected_cfgs` lint is satisfied by the
+> `[workspace.lints.rust]` `check-cfg` declaration (opt in per-crate with
+> `[lints] workspace = true`).
 
 > **Key invariant**: `cargo clippy --workspace --all-targets` and
-> `cargo test --workspace` (without `--features`) must succeed.  All test
-> code that requires `vtpm-tests` must be gated.
+> `cargo test --workspace` (without the flag) must succeed and must NOT compile
+> `ms-tpm-20-ref`.  All test code that needs the reference TPM must be gated
+> with `#[cfg(vtpm_tests)]`.
 
 ## 6. Testing Conventions
 
 ### 6.1 Test naming
 
 - Pure unit tests: descriptive name (`parse_version_pair_major_minor`)
-- vTPM integration tests: prefix `vtpm_` and gate with `#[cfg(feature = "vtpm-tests")]`
+- vTPM integration tests: prefix `vtpm_` and gate with `#[cfg(vtpm_tests)]`
 - Injectorpp (mocked) tests: no special prefix; use `unsafe { ... }` blocks for `_unchecked` API
 
 ### 6.2 Injectorpp (runtime mocking)
@@ -295,14 +319,14 @@ cargo clippy --workspace --all-targets -- -D warnings
 # 3. Unit tests (no features, parallel)
 cargo test --workspace
 
-# 4. MSRV (if Rust 1.94 toolchain is installed)
-cargo +1.94 check --workspace
+# 4. MSRV (if Rust 1.90 toolchain is installed)
+cargo +1.90 check --workspace
 ```
 
-If you have `vtpm-tests` prerequisites (Perl, C toolchain):
+If you have reference-TPM prerequisites (Perl, C toolchain):
 ```bash
 # 5. vTPM tests
-cargo nextest run -p azure-guest-attestation-sdk --features vtpm-tests
+RUSTFLAGS="--cfg vtpm_tests" cargo nextest run -p azure-guest-attestation-sdk
 ```
 
 ## 10. What Cannot Be Unit-Tested
@@ -319,7 +343,7 @@ unit tests or injectorpp mocking:
 | Windows `#[cfg]` blocks on Linux CI | Structurally unreachable |
 
 These are covered by:
-- `vtpm-tests` feature (reference TPM)
+- the `--cfg vtpm_tests` reference-TPM harness
 - Manual testing on real CVM hardware
 - Integration test environments
 

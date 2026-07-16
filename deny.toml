@@ -53,5 +53,5 @@ skip = [
 unknown-registry = "deny"
 unknown-git = "allow"
 allow-git = [
-    "https://github.com/nicktrav/ms-tpm-20-ref",
+    "https://github.com/microsoft/ms-tpm-20-ref-rs",
 ]

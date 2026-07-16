@@ -18,8 +18,6 @@ rust-version.workspace = true
 name = "azure_tpm"
 
 [dependencies]
-ms-tpm-20-ref = { git = "https://github.com/microsoft/ms-tpm-20-ref-rs", features = ["vendored"], optional = true }
-getrandom = { version = "0.2", optional = true }
 bitfield-struct = "0.6"
 
 # Workspace dependencies
@@ -35,9 +33,17 @@ rand.workspace = true
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys.workspace = true
 
-[features]
-default = []
-# Enable in-process reference TPM tests (pulls vendored OpenSSL via ms-tpm-20-ref)
-vtpm-tests = ["ms-tpm-20-ref", "getrandom"]
+[lints]
+workspace = true
 
 [dev-dependencies]
+
+# Reference-TPM harness for this crate's own tests. Gated behind
+# `--cfg vtpm_tests` so the heavy git-sourced `ms-tpm-20-ref` (vendored
+# OpenSSL, needs Perl + a C toolchain) never enters the default build/test
+# graph and is stripped from the published crate. Enable with:
+# RUSTFLAGS="--cfg vtpm_tests". Downstream crates use `azure-tpm-testkit`
+# instead (a dev-dependency cycle prevents this crate from using it).
+[target.'cfg(vtpm_tests)'.dev-dependencies]
+ms-tpm-20-ref = { git = "https://github.com/microsoft/ms-tpm-20-ref-rs", features = ["vendored"] }
+getrandom = { version = "0.2" }

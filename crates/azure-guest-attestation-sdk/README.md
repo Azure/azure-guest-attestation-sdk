@@ -99,7 +99,8 @@ let (report, claims) = get_cvm_report(&tpm, Some(b"user-data"))?;
 The SDK ships with comprehensive tests backed by the
 [Microsoft TPM 2.0 Reference Implementation](https://github.com/microsoft/ms-tpm-20-ref-rs)
 (`ms-tpm-20-ref`), an in-process virtual TPM that enables deterministic,
-hardware-independent testing.
+hardware-independent testing. It is activated with the custom `--cfg vtpm_tests`
+flag (set via `RUSTFLAGS`); the published crate never depends on it.
 
 ### Recommended: cargo-nextest (parallel)
 
@@ -108,10 +109,10 @@ hardware-independent testing.
 cargo install cargo-nextest
 
 # Run all tests (from workspace root – uses alias defined in .cargo/config.toml)
-cargo nt
+RUSTFLAGS="--cfg vtpm_tests" cargo nt
 
 # Or explicitly
-cargo nextest run -p azure-guest-attestation-sdk --features vtpm-tests
+RUSTFLAGS="--cfg vtpm_tests" cargo nextest run -p azure-guest-attestation-sdk
 ```
 
 `cargo-nextest` runs each test as a **separate process**, so each test gets its
@@ -120,7 +121,7 @@ own vTPM instance and tests execute fully in parallel.
 ### Fallback: cargo test
 
 ```bash
-cargo test -p azure-guest-attestation-sdk --features vtpm-tests --lib
+RUSTFLAGS="--cfg vtpm_tests" cargo test -p azure-guest-attestation-sdk --lib
 ```
 
 The reference TPM uses a process-global singleton with Mutex serialization,
@@ -139,7 +140,7 @@ cargo test --lib
 cargo fmt --check
 
 # Lint (includes vtpm-test targets)
-cargo clippy -p azure-guest-attestation-sdk --features vtpm-tests --all-targets -- -D warnings
+RUSTFLAGS="--cfg vtpm_tests" cargo clippy -p azure-guest-attestation-sdk --all-targets -- -D warnings
 ```
 
 ### vTPM Build Requirements

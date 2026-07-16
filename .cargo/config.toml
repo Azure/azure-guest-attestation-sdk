@@ -1,16 +1,23 @@
 # Workspace cargo configuration
 #
 # Aliases make it easy to run the vTPM-backed test suite with a short command.
-# The vtpm-tests feature enables the in-process reference TPM for deterministic,
-# hardware-independent testing.
+# The in-process reference TPM is activated with the custom `--cfg vtpm_tests`
+# flag, which pulls the `ms-tpm-20-ref` reference implementation only for tests.
+#
+# Cargo aliases cannot set environment variables, so prefix these with the flag:
+#
+#   RUSTFLAGS="--cfg vtpm_tests" cargo nt
+#   RUSTFLAGS="--cfg vtpm_tests" cargo vt
 
 [alias]
 # Recommended: run all SDK tests with the reference vTPM via cargo-nextest
-# (each test runs as a separate process — fully parallel, no thread conflicts)
-nt = "nextest run -p azure-guest-attestation-sdk --features vtpm-tests"
+# (each test runs as a separate process — fully parallel, no thread conflicts).
+# Requires: RUSTFLAGS="--cfg vtpm_tests"
+nt = "nextest run -p azure-guest-attestation-sdk"
 
-# Fallback: run with built-in test harness (shared singleton serializes access)
-vt = "test -p azure-guest-attestation-sdk --features vtpm-tests --lib"
+# Fallback: run with built-in test harness (shared singleton serializes access).
+# Requires: RUSTFLAGS="--cfg vtpm_tests"
+vt = "test -p azure-guest-attestation-sdk --lib"
 
 # Statically link the MSVC C runtime on Windows so binaries run on machines
 # without the Visual C++ Redistributable installed.

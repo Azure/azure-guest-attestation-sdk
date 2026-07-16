@@ -8,6 +8,15 @@ members = [
     "tools/azure-tpm-tool",
 ]
 
+# The reference-TPM test harness is deliberately NOT a workspace member: it
+# depends on the heavy git-sourced `ms-tpm-20-ref` (vendored OpenSSL, needs
+# Perl + a C toolchain). Keeping it out of the default member set means
+# `cargo build/clippy/test --workspace` never pulls it. It is compiled only
+# as a `--cfg vtpm_tests` dev-dependency of `azure-tpm` / the SDK.
+exclude = [
+    "crates/azure-tpm-testkit",
+]
+
 # ---------------------------------------------------------------------------
 # Test profile required by injectorpp (runtime function mocking).
 # opt-level = 0 prevents inlining so binary patching targets the right symbols.
@@ -26,7 +35,7 @@ edition = "2021"
 license = "MIT"
 repository = "https://github.com/Azure/azure-guest-attestation-sdk"
 authors = ["Microsoft Azure"]
-rust-version = "1.94"
+rust-version = "1.90"
 
 # Shared dependencies - members can use `workspace = true`
 [workspace.dependencies]
@@ -49,7 +58,7 @@ anyhow = "1.0"
 aes-gcm = { version = "0.10", features = ["aes"] }
 rand = { version = "0.9", features = ["std"] }
 
-# HTTP - pin to 0.11 to avoid ICU dependency issues
+# HTTP - rustls-tls (no OpenSSL) with blocking + json support
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
 
 # Windows
@@ -58,3 +67,11 @@ windows-sys = { version = "0.61", features = ["Win32_System_Registry", "Win32_Fo
 # Internal crates
 azure-guest-attestation-sdk = { path = "crates/azure-guest-attestation-sdk" }
 azure-tpm = { path = "crates/azure-tpm" }
+
+# ---------------------------------------------------------------------------
+# Shared lints. Declares the custom `vtpm_tests` cfg (set via
+# RUSTFLAGS="--cfg vtpm_tests") so the `unexpected_cfgs` lint does not fire
+# under CI's `-Dwarnings`. Opt in per-crate with `[lints] workspace = true`.
+# ---------------------------------------------------------------------------
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(vtpm_tests)'] }

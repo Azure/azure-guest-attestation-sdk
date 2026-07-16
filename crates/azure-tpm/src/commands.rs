@@ -1041,7 +1041,7 @@ fn nv_write_chunk(tpm: &impl RawTpm, nv_index: u32, chunk: &[u8], offset: u16) -
     Ok(())
 }
 
-#[cfg(all(test, feature = "vtpm-tests"))]
+#[cfg(all(test, vtpm_tests))]
 mod tests {
     use super::*;
     use crate::device::Tpm;

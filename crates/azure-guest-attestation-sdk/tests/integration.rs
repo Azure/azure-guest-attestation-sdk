@@ -4,25 +4,27 @@
 //! End-to-end integration tests exercising the public SDK API against a
 //! reference in-process TPM.
 //!
-//! These tests require the `vtpm-tests` feature (which pulls the
-//! `ms-tpm-20-ref` crate).  They are run by CI via:
+//! These tests require the reference-TPM harness, activated with the custom
+//! `--cfg vtpm_tests` flag (which pulls the `ms-tpm-20-ref` crate via the
+//! `azure-tpm-testkit` dev-dependency).  They are run by CI via:
 //!
 //! ```sh
-//! cargo nextest run -p azure-guest-attestation-sdk --features vtpm-tests
+//! RUSTFLAGS="--cfg vtpm_tests" \
+//!   cargo nextest run -p azure-guest-attestation-sdk
 //! ```
 //!
 //! Each test gets its own process with `cargo nextest`, avoiding
 //! global-state collisions from the in-process reference TPM.
 
-// Only compile when the vtpm-tests feature is active.
-#![cfg(feature = "vtpm-tests")]
+// Only compile when the reference-TPM harness is active.
+#![cfg(vtpm_tests)]
 
 use azure_guest_attestation_sdk::client::{
     AttestOptions, AttestationClient, CvmEvidenceOptions, DeviceEvidenceOptions, DeviceType,
     Provider,
 };
-use azure_guest_attestation_sdk::tpm::device::Tpm;
-use azure_guest_attestation_sdk::tpm::{attestation, TpmCommandExt};
+use azure_guest_attestation_sdk::tpm::attestation;
+use azure_guest_attestation_sdk::tpm::TpmCommandExt;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -31,7 +33,7 @@ use azure_guest_attestation_sdk::tpm::{attestation, TpmCommandExt};
 /// Open a reference TPM and build an `AttestationClient` from it.
 /// Returns `None` if the reference TPM is not available.
 fn make_client() -> Option<AttestationClient> {
-    let tpm = Tpm::open_reference().ok()?;
+    let tpm = azure_tpm_testkit::reference_tpm().ok()?;
     Some(AttestationClient::from_tpm(tpm))
 }
 
@@ -183,7 +185,7 @@ fn get_cvm_evidence_fails_gracefully_on_reference_tpm() {
 /// attestation module functions.
 #[test]
 fn ecc_signing_key_lifecycle() {
-    let tpm = match Tpm::open_reference() {
+    let tpm = match azure_tpm_testkit::reference_tpm() {
         Ok(t) => t,
         Err(_) => return,
     };
@@ -244,7 +246,7 @@ fn ecc_signing_key_lifecycle() {
 /// structure using the public `tpm::types` parser.
 #[test]
 fn pcr_quote_parse_roundtrip() {
-    let tpm = match Tpm::open_reference() {
+    let tpm = match azure_tpm_testkit::reference_tpm() {
         Ok(t) => t,
         Err(_) => return,
     };
@@ -296,7 +298,7 @@ fn pcr_quote_parse_roundtrip() {
 /// This test ensures both functions agree and trimming doesn't panic.
 #[test]
 fn ak_cert_trimmed_is_subset_of_full() {
-    let tpm = match Tpm::open_reference() {
+    let tpm = match azure_tpm_testkit::reference_tpm() {
         Ok(t) => t,
         Err(_) => return,
     };
@@ -330,7 +332,7 @@ fn ak_cert_trimmed_is_subset_of_full() {
 /// The reference TPM starts clean, so the user-data NV index should not exist.
 #[test]
 fn user_data_nv_absent_on_fresh_tpm() {
-    let tpm = match Tpm::open_reference() {
+    let tpm = match azure_tpm_testkit::reference_tpm() {
         Ok(t) => t,
         Err(_) => return,
     };

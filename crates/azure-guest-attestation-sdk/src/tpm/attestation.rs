@@ -464,24 +464,24 @@ fn pad_user_data(input: &[u8]) -> [u8; 64] {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "vtpm-tests")]
+    #[cfg(vtpm_tests)]
     use super::ensure_user_data_index_and_write;
     use super::pad_user_data;
-    #[cfg(feature = "vtpm-tests")]
+    #[cfg(vtpm_tests)]
     use crate::tpm::attestation::ensure_persistent_ak;
-    #[cfg(feature = "vtpm-tests")]
+    #[cfg(vtpm_tests)]
     use crate::tpm::attestation::get_ak_pub;
-    #[cfg(feature = "vtpm-tests")]
+    #[cfg(vtpm_tests)]
     use crate::tpm::attestation::get_pcr_quote;
-    #[cfg(feature = "vtpm-tests")]
+    #[cfg(vtpm_tests)]
     use crate::tpm::commands::TpmCommandExt;
-    #[cfg(feature = "vtpm-tests")]
-    use crate::tpm::device::Tpm;
+    #[cfg(vtpm_tests)]
+    use azure_tpm_testkit::reference_tpm;
 
-    #[cfg(feature = "vtpm-tests")]
+    #[cfg(vtpm_tests)]
     #[test]
     fn vtpm_user_data_index_write_and_read() {
-        let tpm = Tpm::open_reference().expect("failed to open reference TPM");
+        let tpm = reference_tpm().expect("failed to open reference TPM");
         let raw = b"hello";
         let padded = pad_user_data(raw);
         if let Err(e) = ensure_user_data_index_and_write(&tpm, &padded) {
@@ -547,14 +547,14 @@ mod tests {
 
     #[test]
     fn vtpm_quote_signature_verifies() {
-        #[cfg(feature = "vtpm-tests")]
+        #[cfg(vtpm_tests)]
         {
-            use crate::tpm::device::Tpm;
             use crate::tpm::types::{Tpm2bPublic, TpmUnmarshal};
+            use azure_tpm_testkit::reference_tpm;
             use num_bigint::BigUint;
             use sha2::{Digest, Sha256};
 
-            let tpm = Tpm::open_reference().expect("open reference TPM");
+            let tpm = reference_tpm().expect("open reference TPM");
             if let Err(e) = ensure_persistent_ak(&tpm) {
                 tracing::debug!(target: "guest_attest", error = %e, "Skipping vtpm_quote_signature_verifies (shared TPM contention)");
                 return;
@@ -635,12 +635,12 @@ mod tests {
 
     #[test]
     fn vtpm_get_quote() {
-        #[cfg(feature = "vtpm-tests")]
+        #[cfg(vtpm_tests)]
         {
             use crate::tpm::attestation::{ensure_persistent_ak, get_pcr_quote};
-            use crate::tpm::device::Tpm;
+            use azure_tpm_testkit::reference_tpm;
 
-            let tpm = match Tpm::open_reference() {
+            let tpm = match reference_tpm() {
                 Ok(t) => t,
                 Err(_) => return,
             };
@@ -661,12 +661,12 @@ mod tests {
 
     #[test]
     fn vtpm_ephemeral_key_multiple_pcrs_policy_non_empty() {
-        #[cfg(feature = "vtpm-tests")]
+        #[cfg(vtpm_tests)]
         {
             use crate::tpm::attestation::{ensure_persistent_ak, get_ephemeral_key};
-            use crate::tpm::device::Tpm;
             use crate::tpm::types::{Tpm2bPublic, TpmUnmarshal};
-            let tpm = match Tpm::open_reference() {
+            use azure_tpm_testkit::reference_tpm;
+            let tpm = match reference_tpm() {
                 Ok(t) => t,
                 Err(_) => return,
             };
@@ -693,16 +693,16 @@ mod tests {
 
     #[test]
     fn vtpm_ephemeral_rsa_decrypt_roundtrip() {
-        #[cfg(feature = "vtpm-tests")]
+        #[cfg(vtpm_tests)]
         {
             use crate::tpm::attestation::get_ephemeral_key;
             use crate::tpm::commands::TpmCommandExt;
-            use crate::tpm::device::Tpm;
             use crate::tpm::types::{Tpm2bPublic, TpmUnmarshal, TpmtRsaDecryptScheme};
+            use azure_tpm_testkit::reference_tpm;
             use num_bigint::BigUint;
             use rand::{rngs::StdRng, RngCore, SeedableRng};
 
-            let tpm = match Tpm::open_reference() {
+            let tpm = match reference_tpm() {
                 Ok(t) => t,
                 Err(_) => return,
             };
@@ -775,16 +775,16 @@ mod tests {
 
     #[test]
     fn vtpm_ephemeral_rsa_decrypt_roundtrip_policy() {
-        #[cfg(feature = "vtpm-tests")]
+        #[cfg(vtpm_tests)]
         {
             use crate::tpm::attestation::get_ephemeral_key;
             use crate::tpm::commands::TpmCommandExt;
-            use crate::tpm::device::Tpm;
             use crate::tpm::types::{Tpm2bPublic, TpmUnmarshal, TpmtRsaDecryptScheme};
+            use azure_tpm_testkit::reference_tpm;
             use num_bigint::BigUint;
             use rand::{rngs::StdRng, RngCore, SeedableRng};
 
-            let tpm = match Tpm::open_reference() {
+            let tpm = match reference_tpm() {
                 Ok(t) => t,
                 Err(_) => return,
             };

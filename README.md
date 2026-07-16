@@ -62,7 +62,9 @@ cargo build -p azure-tpm-tool --release
 
 The SDK uses the [Microsoft TPM 2.0 Reference Implementation](https://github.com/microsoft/ms-tpm-20-ref-rs)
 as an in-process virtual TPM for deterministic, hardware-independent testing.
-This is enabled by the `vtpm-tests` feature flag.
+It is activated with the custom `--cfg vtpm_tests` flag (set via `RUSTFLAGS`),
+which pulls the reference implementation only for tests — the published crates
+never depend on it.
 
 ### Recommended: cargo-nextest (parallel, process-per-test)
 
@@ -75,10 +77,10 @@ concerns.
 cargo install cargo-nextest
 
 # Run all SDK tests (uses workspace alias)
-cargo nt
+RUSTFLAGS="--cfg vtpm_tests" cargo nt
 
 # Or explicitly
-cargo nextest run -p azure-guest-attestation-sdk --features vtpm-tests
+RUSTFLAGS="--cfg vtpm_tests" cargo nextest run -p azure-guest-attestation-sdk
 ```
 
 ### Fallback: cargo test
@@ -92,10 +94,10 @@ state conflicts under multi-threaded execution; affected tests skip gracefully.
 
 ```bash
 # Using workspace alias
-cargo vt
+RUSTFLAGS="--cfg vtpm_tests" cargo vt
 
 # Or explicitly
-cargo test -p azure-guest-attestation-sdk --features vtpm-tests --lib
+RUSTFLAGS="--cfg vtpm_tests" cargo test -p azure-guest-attestation-sdk --lib
 ```
 
 ### Other Test Commands
@@ -105,7 +107,7 @@ cargo test -p azure-guest-attestation-sdk --features vtpm-tests --lib
 cargo fmt --check
 
 # Run clippy lints (all targets including tests)
-cargo clippy -p azure-guest-attestation-sdk --features vtpm-tests --all-targets -- -D warnings
+cargo clippy -p azure-guest-attestation-sdk --all-targets -- -D warnings
 
 # Unit tests only (no vTPM, no hardware TPM needed)
 cargo test -p azure-guest-attestation-sdk --lib
@@ -113,7 +115,7 @@ cargo test -p azure-guest-attestation-sdk --lib
 
 ### vTPM Test Requirements
 
-Tests gated behind `vtpm-tests` use the in-process reference TPM (`ms-tpm-20-ref`).
+Tests activated with `--cfg vtpm_tests` use the in-process reference TPM (`ms-tpm-20-ref`).
 Build requirements:
 
 - **Perl** (for vendored OpenSSL build) – [Strawberry Perl](https://strawberryperl.com/) on Windows

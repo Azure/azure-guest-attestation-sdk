@@ -22,7 +22,11 @@ Ensure-Tool 'cargo-llvm-cov' 'cargo-llvm-cov' 'cargo-llvm-cov'
 Write-Host "Cleaning previous coverage artifacts" -ForegroundColor DarkGray
 cargo llvm-cov clean --workspace
 
-$commonArgs = @('--features','vtpm-tests','--','--test-threads=1')
+# Activate the in-process reference TPM harness via the custom cfg flag.
+# cargo-llvm-cov appends its instrumentation flags to any existing RUSTFLAGS.
+$env:RUSTFLAGS = '--cfg vtpm_tests'
+
+$commonArgs = @('--','--test-threads=1')
 
 if ($Html) {
     Write-Host "Generating HTML coverage report..." -ForegroundColor Cyan
