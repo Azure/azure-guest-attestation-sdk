@@ -22,8 +22,10 @@ base64.workspace = true
 hex.workspace = true
 anyhow.workspace = true
 
-# Tool-specific dependencies
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
+# Tool-specific dependencies.
+# See the SDK crate for why the no-provider rustls feature is used; the
+# aws-lc-rs provider is installed at startup via `ensure_crypto_provider()`.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls-webpki-roots-no-provider", "json"] }
 
 # Optional dependencies
 x509-parser = { version = "0.16", optional = true }

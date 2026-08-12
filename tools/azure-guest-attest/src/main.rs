@@ -265,6 +265,9 @@ enum EndorsementAction {
 }
 
 fn main() -> anyhow::Result<()> {
+    // Install the aws-lc-rs rustls crypto provider before any TLS client is
+    // built (reqwest uses a no-provider rustls feature to avoid `ring`).
+    azure_guest_attestation_sdk::ensure_crypto_provider();
     // Initialize tracing early so all subsequent operations (including TPM access)
     // emit logs according to AZURE_GUEST_ATTESTATION_LOG / RUST_LOG environment filters.
     azure_guest_attestation_sdk::init_tracing();

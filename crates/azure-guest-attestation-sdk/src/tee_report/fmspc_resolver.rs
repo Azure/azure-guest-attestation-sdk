@@ -97,6 +97,7 @@ impl FmspcResolver {
     /// `base_url` is the scheme + host (e.g. `https://api.trustedservices.intel.com`).
     /// Paths of the form `/{tee}/certification/v4/tcb?fmspc=<hex>` are appended.
     pub fn with_base_url(base_url: impl Into<String>) -> Self {
+        crate::ensure_crypto_provider();
         Self {
             http: Client::new(),
             base_url: base_url.into(),

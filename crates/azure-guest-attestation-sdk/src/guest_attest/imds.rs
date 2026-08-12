@@ -31,6 +31,7 @@ impl ImdsClient {
     /// In the rare event the timed client fails to build, a warning is logged
     /// and an untimed default client is used as a last resort.
     pub fn new() -> Self {
+        crate::ensure_crypto_provider();
         // Connect timeout fails fast when the metadata IP is unroutable;
         // the longer overall timeout accommodates TD Quote generation on Azure.
         let http = Client::builder()

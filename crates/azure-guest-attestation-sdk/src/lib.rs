@@ -139,6 +139,27 @@ impl Default for TracingConfig {
     }
 }
 
+/// Ensures a process-wide rustls [`CryptoProvider`](rustls::crypto::CryptoProvider)
+/// (backed by aws-lc-rs) is installed.
+///
+/// The HTTP stack uses rustls through reqwest configured with a *no-provider*
+/// TLS feature so the unmaintained `ring` backend is never pulled in. As a
+/// result a crypto provider must be installed as the process default before the
+/// first TLS client is constructed, otherwise rustls panics.
+///
+/// This is idempotent and a no-op if a provider was already installed (for
+/// example by the host application), so it is safe to call from every client
+/// constructor as well as from application `main()`.
+pub fn ensure_crypto_provider() {
+    use std::sync::Once;
+    static CRYPTO_PROVIDER_INIT: Once = Once::new();
+    CRYPTO_PROVIDER_INIT.call_once(|| {
+        // An `Err` simply means a provider is already installed by the host
+        // process, which is exactly the state we want, so it is ignored.
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    });
+}
+
 /// Initialize global tracing subscriber (idempotent).
 ///
 /// Default level: INFO.  Override via `AZURE_GUEST_ATTESTATION_LOG` or `RUST_LOG`.

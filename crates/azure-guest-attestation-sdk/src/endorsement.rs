@@ -83,6 +83,7 @@ pub struct ThimClient {
 impl ThimClient {
     /// Create a client targeting `https://{region}.thim.azure.net`.
     pub fn new(region: &str) -> Self {
+        crate::ensure_crypto_provider();
         Self {
             http: Client::new(),
             base_url: format!("https://{region}.thim.azure.net"),
@@ -91,6 +92,7 @@ impl ThimClient {
 
     /// Create a client with a fully custom base URL (no trailing slash).
     pub fn with_base_url(base_url: &str) -> Self {
+        crate::ensure_crypto_provider();
         Self {
             http: Client::new(),
             base_url: base_url.trim_end_matches('/').to_string(),

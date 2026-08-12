@@ -1568,8 +1568,8 @@ async fn serve_https(
 async fn main() {
     azure_guest_attestation_sdk::init_tracing();
 
-    // Install the ring crypto provider for rustls before any TLS config is built.
-    rustls::crypto::ring::default_provider()
+    // Install the aws-lc-rs crypto provider for rustls before any TLS config is built.
+    rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
         .expect("failed to install rustls crypto provider");
 

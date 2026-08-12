@@ -105,6 +105,7 @@ impl MaaProvider {
     /// only the base URL is given the default guest-attest path and
     /// api-version are appended.
     pub fn new(endpoint: impl Into<String>) -> Self {
+        crate::ensure_crypto_provider();
         let raw: String = endpoint.into();
         let resolved = resolve_maa_url(&raw, GUEST_ATTEST_PATH, GUEST_ATTEST_API_VERSION);
         tracing::info!(target: "guest_attest", provider = "MAA", raw_endpoint = %raw, resolved_endpoint = %resolved, "MAA provider created");
@@ -231,6 +232,7 @@ pub fn submit_tee_only(
     endpoint: &str,
     report_type: crate::report::CvmReportType,
 ) -> io::Result<String> {
+    crate::ensure_crypto_provider();
     let mut timer = StageTimer::new();
     // Resolve the URL: append the correct TEE-only path when only a base URL is given.
     let tee_path = match report_type {

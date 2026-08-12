@@ -34,8 +34,15 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 aes-gcm.workspace = true
 
-# Use local reqwest spec to avoid workspace conflict
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
+# Use local reqwest spec to avoid workspace conflict.
+# `rustls-tls-webpki-roots-no-provider` selects rustls + webpki roots WITHOUT
+# pulling in the `ring` crypto backend (the default `rustls-tls` feature hard-
+# wires ring). The aws-lc-rs provider is supplied via the `rustls` dependency
+# below and installed at runtime by `ensure_crypto_provider()`.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls-webpki-roots-no-provider", "json"] }
+# Direct rustls dependency pins the aws-lc-rs crypto provider into the build so
+# `ensure_crypto_provider()` can install it as the process default.
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys.workspace = true
