@@ -3113,7 +3113,7 @@ impl PcrReadResponse {
 #[derive(Debug, Clone)]
 pub struct ParsedQuoteAttest {
     pub pcr_selections: Vec<PcrSelection>,
-    pub pcr_digests: Vec<Vec<u8>>,
+    pub pcr_digest: Vec<u8>,
     pub extra_data: Vec<u8>,
 }
 
@@ -3175,11 +3175,10 @@ pub fn parse_quote_attestation(attest_body: &[u8]) -> io::Result<ParsedQuoteAtte
     c += 8;
     // TPMS_QUOTE_INFO
     let pcr_sel_list = PcrSelectionList::unmarshal(attest_body, &mut c)?;
-    // TPML_DIGEST
-    let digests = DigestList::unmarshal(attest_body, &mut c)?;
+    let pcr_digest = Tpm2bBytes::unmarshal(attest_body, &mut c)?;
     Ok(ParsedQuoteAttest {
         pcr_selections: pcr_sel_list.0,
-        pcr_digests: digests.0,
+        pcr_digest: pcr_digest.0,
         extra_data: extra,
     })
 }
@@ -3514,7 +3513,7 @@ mod tests {
     fn parse_quote_attest_minimal() {
         // Build a synthetic minimal TPMS_ATTEST QUOTE body
         // magic(FF544347) type(8018) qualifiedSigner(0) extraData(0) clockInfo(17 bytes) firmware(8 bytes)
-        // PCR selection list: count=0 ; digest list: count=0
+        // PCR selection list: count=0 ; PCR digest: size=0
         let mut b = Vec::new();
         0xFF544347u32.marshal(&mut b);
         0x8018u16.marshal(&mut b);
@@ -3527,11 +3526,34 @@ mod tests {
         b.push(1);
         b.extend_from_slice(&[0; 8]); // firmwareVersion
         (0u32).marshal(&mut b); // PCR selection count
-        (0u32).marshal(&mut b); // digest count
+        (0u16).marshal(&mut b); // PCR digest size
         let parsed = parse_quote_attestation(&b).expect("parse attest");
         assert_eq!(parsed.pcr_selections.len(), 0);
-        assert_eq!(parsed.pcr_digests.len(), 0);
+        assert!(parsed.pcr_digest.is_empty());
         assert!(parsed.extra_data.is_empty());
+    }
+
+    #[test]
+    fn parse_quote_attest_real_tdx_quote() {
+        let attest = hex::decode(concat!(
+            "ff54434780180022000b20ee6ae336f07068f062eca21d131a649c9cb7143df1b3f",
+            "a361210ff73a754c600200000000000000000000000000000000000000000000000",
+            "00000000000000000000000000002afbe6000000010000000001202003120012000",
+            "300000001000b03ffffff0020262aaef0977c0eda19f5697a776e18afc42230e777",
+            "88bf73fcbaaf2471d5a703"
+        ))
+        .expect("valid quote hex");
+
+        let parsed = parse_quote_attestation(&attest).expect("parse real TDX quote");
+
+        assert_eq!(parsed.pcr_selections.len(), 1);
+        assert_eq!(parsed.pcr_selections[0].hash_alg, 0x000B);
+        assert_eq!(parsed.pcr_selections[0].select, [0xFF, 0xFF, 0xFF]);
+        assert_eq!(
+            parsed.pcr_digest,
+            hex::decode("262aaef0977c0eda19f5697a776e18afc42230e77788bf73fcbaaf2471d5a703")
+                .expect("valid digest hex")
+        );
     }
 
     #[test]
@@ -3718,7 +3740,7 @@ mod tests {
             b.push(1); // safe
             b.extend_from_slice(&[0; 8]); // firmware
             (0u32).marshal(&mut b); // PCR selection count
-            (0u32).marshal(&mut b); // digest count
+            (0u16).marshal(&mut b); // PCR digest size
             b
         };
         let mut params = Vec::new();
