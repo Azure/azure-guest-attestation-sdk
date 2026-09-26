@@ -54,7 +54,11 @@ status alone appears acceptable.
   `aggregate_date`. Verified measurements and signature checks are retained.
   It is not reduced to an error string.
 - Authentication, parsing, or freshness failures report `passed: false` and
-  an `error`, without inventing an authenticated TCB assessment.
+  a fixed `error` message and `error_code`, without inventing an authenticated
+  TCB assessment. Raw certificate/parser error chains and input paths are not
+  printed. Codes are `input_not_found`, `permission_denied`, `invalid_input`,
+  `invalid_evidence`, and `verification_failed`. Detailed programmatic errors
+  remain available from the SDK; the CLI intentionally limits diagnostics.
 - `tcb_checked` indicates that the authenticated assessment returned, **not**
   that all statuses passed. `verification_scope` names the requested checks,
   including on failure.

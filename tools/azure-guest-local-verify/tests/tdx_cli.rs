@@ -234,5 +234,5 @@ fn malformed_collateral_never_falls_back_to_signature_only() {
         value["verification_scope"],
         "signature_and_chain_and_tcb_info"
     );
-    assert!(value["error"].as_str().unwrap().contains("OE x64"));
+    assert_eq!(value["error_code"], "invalid_evidence");
 }

@@ -5,8 +5,7 @@
 //!
 //! The caller authenticates collateral and enforces its validity interval. This
 //! module performs no crypto, I/O, or migration-policy inference. Module-version,
-//! initial-model, and final-status rules follow Open Enclave PR #5108:
-//! <https://github.com/openenclave/openenclave/pull/5108>.
+//! initial-model, and order-sensitive status rules are evaluated independently.
 
 use std::io;
 
@@ -55,7 +54,7 @@ pub struct TdxTcbResult {
     pub launch: TcbAssessment,
     /// Assessment of the initial TCB, when evidence is available.
     pub initial: Option<TcbAssessment>,
-    /// Status selected by the OE-style aggregation policy, not a total severity
+    /// Status selected by the order-sensitive aggregation policy, not a total severity
     /// ordering. Inspect every component: a terminal current status can retain
     /// precedence over an initial status, and NotEvaluated dominates.
     pub aggregate_status: TcbStatus,
@@ -409,7 +408,7 @@ pub(crate) fn apply_baseline(
     Ok(())
 }
 
-/// Select an assessment using the order-sensitive OE final-status policy.
+/// Select an assessment using the order-sensitive final-status policy.
 ///
 /// An unevaluated input dominates even revocation here (unlike platform/module
 /// convergence). Otherwise a current terminal status wins, then an other terminal
@@ -432,21 +431,22 @@ pub(crate) fn aggregate(current: &TcbAssessment, other: &TcbAssessment) -> TcbAs
     }
 }
 
-/// Match only the initial-model mapping in the final merged OE PR #5108 table.
+/// Match only the supported Emerald Rapids initial-model/FMSPC allowlist.
 ///
 /// Model words are little-endian; only the stepping nibble in word one is masked.
 /// No other processor models or FMSPCs are inferred from this mapping.
 pub(crate) fn initial_model_matches(model: &[u8; 12], fmspc: &[u8; 6]) -> bool {
     const WORDS: [u32; 3] = [0x0000_0000, 0x000c_06f0, 0x8000_0000];
     const MASKS: [u32; 3] = [0xffff_ffff, 0xffff_fff0, 0xffff_ffff];
-    let model_matches =
-        model
-            .chunks_exact(4)
-            .zip(WORDS.into_iter().zip(MASKS))
-            .all(|(bytes, (expected, mask))| {
-                let actual = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-                actual & mask == expected
-            });
+    let model_matches = model
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(WORDS.into_iter().zip(MASKS))
+        .all(|(bytes, (expected, mask))| {
+            let actual = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+            actual & mask == expected
+        });
     model_matches
         && matches!(
             *fmspc,

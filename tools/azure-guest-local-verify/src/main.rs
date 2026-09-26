@@ -62,7 +62,7 @@ mod imp {
     struct TdxArgs {
         /// Path to a bare or QGS-wrapped TDX quote.
         quote: PathBuf,
-        /// OE flattened x64 endorsements bundle (only TCB Info and issuer chain used).
+        /// Flattened x64 v4 endorsements bundle (only TCB Info and issuer chain used).
         #[arg(long, group = "collateral", conflicts_with_all = ["tcb_info", "tcb_issuer_chain"])]
         endorsements: Option<PathBuf>,
         /// Signed Intel TDX TCB Info JSON; requires --tcb-issuer-chain.
@@ -138,7 +138,31 @@ mod imp {
     }
 
     fn error_result(error: anyhow::Error) -> Value {
-        json!({"passed": false, "error": format!("{error:#}")})
+        // Certificate/parser errors and their contexts can contain input bytes
+        // or paths. Emit only fixed categories; never format the error chain.
+        use std::io::ErrorKind;
+        let kind = error
+            .downcast_ref::<std::io::Error>()
+            .map(std::io::Error::kind);
+        let (code, message) = match kind {
+            Some(ErrorKind::NotFound) => ("input_not_found", "An input file was not found"),
+            Some(ErrorKind::PermissionDenied) => (
+                "permission_denied",
+                "Permission denied while reading an input",
+            ),
+            Some(ErrorKind::InvalidInput) => {
+                ("invalid_input", "Invalid verification input or time")
+            }
+            Some(ErrorKind::InvalidData) => (
+                "invalid_evidence",
+                "Invalid, expired, or mismatched evidence or collateral",
+            ),
+            _ => (
+                "verification_failed",
+                "Signature, certificate-chain, or verification-time validation failed",
+            ),
+        };
+        json!({"passed": false, "error_code": code, "error": message})
     }
 
     fn verify_tdx(args: &TdxArgs, now: i64) -> Result<Value> {
@@ -183,8 +207,10 @@ mod imp {
         if let Some(body) = &r.service_td {
             let words: Vec<u32> = body
                 .init_tee_fmspc
-                .chunks_exact(4)
-                .map(|word| u32::from_le_bytes(word.try_into().expect("four-byte model word")))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|word| u32::from_le_bytes(*word))
                 .collect();
             let extension = json!({
                 "tee_tcb_svn_2": hex(&body.base.tee_tcb_svn_2),
@@ -396,12 +422,25 @@ mod imp {
         }
 
         #[test]
-        fn errors_are_json_escaped() {
-            let message = "bad\n\t\r\"path\"\\\u{0001}";
-            let output = error_result(anyhow::anyhow!(message));
-            let decoded: Value = serde_json::from_str(&output.to_string()).unwrap();
-            assert_eq!(decoded["error"], message);
-            assert_eq!(decoded["passed"], false);
+        fn errors_do_not_disclose_lower_level_contents() {
+            const SECRET: &str = "CERTIFICATE_CONTENT_SENTINEL\nprivate/path\"";
+            for kind in [
+                std::io::ErrorKind::NotFound,
+                std::io::ErrorKind::PermissionDenied,
+                std::io::ErrorKind::InvalidData,
+                std::io::ErrorKind::InvalidInput,
+                std::io::ErrorKind::Other,
+            ] {
+                let error = anyhow::Error::new(std::io::Error::new(kind, SECRET))
+                    .context(format!("certificate parsing failed: {SECRET}"));
+                let output = error_result(error);
+                assert_eq!(output["passed"], false);
+                assert!(!output.to_string().contains("CERTIFICATE_CONTENT_SENTINEL"));
+                assert!(!output.to_string().contains("private/path"));
+                assert!(output["error_code"].is_string());
+            }
+            let output = error_result(anyhow::anyhow!(SECRET));
+            assert!(!output.to_string().contains("CERTIFICATE_CONTENT_SENTINEL"));
         }
     }
 }

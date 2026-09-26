@@ -32,7 +32,7 @@ pub struct TdxCollateral<'a> {
 }
 
 impl<'a> TdxCollateral<'a> {
-    /// Read OE's flattened **x64** `tdx_ql_qve_collateral_t` v4 encoding.
+    /// Read the flattened **x64** `tdx_ql_qve_collateral_t` v4 encoding.
     /// Ignores pointer slots, uses checked lengths, and rejects trailing data.
     /// Only TCB Info and its issuer chain are used; this does not verify CRLs
     /// or QE identity included in the bundle.
@@ -73,7 +73,7 @@ pub struct TdxTcbPolicy {
     /// Explicit Unix time; `None` uses the current time for both certificates
     /// and TCB Info. Historical evaluation does not establish present freshness.
     pub verification_time: Option<i64>,
-    /// Optional OE-compatible certification-date baseline. A matched TCB date
+    /// Optional certification-date baseline. A matched TCB date
     /// at/after this timestamp relaxes OutOfDate to UpToDate (or OutOfDate-
     /// ConfigurationNeeded to ConfigurationNeeded). This is an explicit policy
     /// relaxation, never a bypass of signature or freshness checks.
@@ -126,7 +126,7 @@ fn authenticate_signature(
     now: i64,
     trusted_roots: &[crypto::Cert],
 ) -> io::Result<Value> {
-    // OE sections include C-string terminators. Strip only the trailing NULs;
+    // Serialized sections include C-string terminators. Strip only the trailing NULs;
     // preserve the original signed tcbInfo bytes (including JSON whitespace).
     let json = collateral.tcb_info.trim_ascii_end();
     let json = json.strip_suffix(&[0]).map_or(json, |_| {
