@@ -13,8 +13,8 @@
 use super::crypto::{self, Cert, DigestAlg};
 use super::roots;
 use crate::tee_report::td_quote::{
-    parse_td_quote, TdQuoteBody, TdQuoteCertification, TdQuoteEcdsaNestedCertification,
-    TD_QUOTE_HEADER_V4_SIZE, TD_QUOTE_HEADER_V5_SIZE,
+    parse_td_quote, TdQuoteBody, TdQuoteBodyTdx15Ex, TdQuoteCertification,
+    TdQuoteEcdsaNestedCertification, TD_QUOTE_HEADER_V4_SIZE, TD_QUOTE_HEADER_V5_SIZE,
 };
 use std::io;
 
@@ -50,11 +50,15 @@ fn strip_qgs_envelope(bytes: &[u8]) -> &[u8] {
     }
 }
 
-/// Policy controls for [`verify_td_quote`]. Reserved for TCB/policy options
-/// added in a later phase; the current slice validates signatures + chain.
+/// Policy controls for signature and certificate-chain verification.
+/// TCB assessment additionally requires [`super::tdx_tcb::verify_td_quote_with_collateral`].
 #[derive(Clone, Copy, Debug, Default)]
 #[non_exhaustive]
-pub struct TdxVerifyPolicy {}
+pub struct TdxVerifyPolicy {
+    /// Explicit Unix time for historical certificate validation. `None` uses
+    /// the current time. A historical result is not proof of current freshness.
+    pub verification_time: Option<i64>,
+}
 
 /// Key TD measurements extracted from a verified quote body.
 #[derive(Clone, Copy, Debug)]
@@ -90,6 +94,10 @@ pub struct TdxVerifyResult {
     pub pck_chain_valid: bool,
     /// The verified TD measurements from the quote body.
     pub measurements: TdxMeasurements,
+    /// Signed Service-TD extension fields for a type-4 body. Their semantic
+    /// applicability is gated by ATTRIBUTES.SERVTD_EXT (bit 17); field presence
+    /// alone is not a migration-policy or TCB approval.
+    pub service_td: Option<TdQuoteBodyTdx15Ex>,
 }
 
 /// Verify an Intel TDX ECDSA attestation quote.
@@ -111,12 +119,15 @@ pub fn verify_td_quote(
 pub(crate) fn verify_td_quote_with_roots(
     quote_bytes: &[u8],
     roots: &[Cert],
-    _policy: &TdxVerifyPolicy,
+    policy: &TdxVerifyPolicy,
 ) -> io::Result<TdxVerifyResult> {
     // Unwrap any QGS envelope so the signed byte range matches the parse.
     let inner = strip_qgs_envelope(quote_bytes);
     let parsed =
         parse_td_quote(inner).map_err(|e| io::Error::other(format!("parse TD quote: {e}")))?;
+    if !matches!(parsed.header.version, 4 | 5) || parsed.header.tee_type != 0x81 {
+        return Err(io::Error::other("expected a TDX v4/v5 quote"));
+    }
     let sig = parsed
         .signature
         .as_ref()
@@ -177,7 +188,7 @@ pub(crate) fn verify_td_quote_with_roots(
         .filter(|c| !crypto::cert_is_self_signed(c))
         .cloned()
         .collect();
-    crypto::verify_cert_chain(pck_leaf, &intermediates, roots)?;
+    crypto::verify_cert_chain_at(pck_leaf, &intermediates, roots, policy.verification_time)?;
 
     // 2c. QE report signature by the PCK leaf.
     let (qr, qs) = ecdsa.qe_report_signature.split_at(32);
@@ -212,6 +223,10 @@ pub(crate) fn verify_td_quote_with_roots(
         qe_report_signature_valid: true,
         pck_chain_valid: true,
         measurements,
+        service_td: match &parsed.body {
+            TdQuoteBody::Tdx15Ex(body) => Some(*body),
+            _ => None,
+        },
     })
 }
 

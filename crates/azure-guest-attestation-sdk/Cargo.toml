@@ -24,13 +24,15 @@ bitfield-struct = "0.6"
 # Workspace dependencies
 base64.workspace = true
 serde.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
 rand.workspace = true
 sha2.workspace = true
 hex.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 aes-gcm = { workspace = true, optional = true }
+time = { version = "0.3", features = ["parsing", "formatting"], optional = true }
+x509-parser = { version = "0.16", optional = true }
 
 # HTTP. TLS backend is feature-selected: `rustls-tls` (default) or `native-tls`.
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json"] }
@@ -53,7 +55,7 @@ native = ["dep:openssl", "reqwest/native-tls", "azure-tpm/native"]
 # Local (offline) DCAP-style attestation verification (ECDSA + X.509 chain
 # validation). Requires the `native` backend: OpenSSL on Linux, CNG/crypt32 on
 # Windows.
-verify = ["native"]
+verify = ["native", "dep:time", "dep:x509-parser"]
 
 [lints]
 workspace = true

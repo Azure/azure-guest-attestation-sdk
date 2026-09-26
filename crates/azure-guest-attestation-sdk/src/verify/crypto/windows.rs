@@ -10,13 +10,13 @@
 //! `BCryptVerifySignature` wants `r ‖ s` at exactly the curve size, whereas
 //! OpenSSL's `BigNum` accepts any length — see [`fixed_width_be`].
 
-use super::{other, DigestAlg};
+use super::{other, unix_time_to_filetime_ticks, DigestAlg};
 use base64::Engine as _;
 use core::ffi::c_void;
 use std::io;
 use std::ptr;
 use windows_sys::core::PCWSTR;
-use windows_sys::Win32::Foundation::NTSTATUS;
+use windows_sys::Win32::Foundation::{FILETIME, NTSTATUS};
 use windows_sys::Win32::Security::Cryptography::{
     szOID_BASIC_CONSTRAINTS2, BCryptCloseAlgorithmProvider, BCryptCreateHash, BCryptDestroyHash,
     BCryptDestroyKey, BCryptFinishHash, BCryptHashData, BCryptImportKeyPair,
@@ -84,6 +84,11 @@ pub(crate) fn cert_from_pem(pem: &[u8]) -> io::Result<Cert> {
         .next()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "no PEM certificate found"))?;
     Cert::from_der(der)
+}
+
+/// Encode a certificate as DER.
+pub(crate) fn cert_to_der(cert: &Cert) -> io::Result<Vec<u8>> {
+    Ok(cert.der.clone())
 }
 
 /// Whether `cert` is self-signed (subject == issuer and the signature verifies
@@ -178,6 +183,19 @@ pub(crate) fn verify_cert_chain(
     intermediates: &[Cert],
     roots: &[Cert],
 ) -> io::Result<()> {
+    verify_cert_chain_at(leaf, intermediates, roots, None)
+}
+
+/// Validate a chain against pinned `roots` at `unix_time`, or the wall clock
+/// when `None`. Explicit times must be nonnegative and fit the shared FILETIME
+/// range; invalid times return `InvalidInput`. All existing chain checks apply.
+pub(crate) fn verify_cert_chain_at(
+    leaf: &Cert,
+    intermediates: &[Cert],
+    roots: &[Cert],
+    unix_time: Option<i64>,
+) -> io::Result<()> {
+    let time = unix_time.map(unix_time_to_filetime).transpose()?;
     if roots.is_empty() {
         return Err(io::Error::other(
             "certificate chain validation failed: no trusted roots supplied",
@@ -186,14 +204,14 @@ pub(crate) fn verify_cert_chain(
     let mut current = leaf.clone();
     for _ in 0..MAX_CHAIN_DEPTH {
         let ctx = current.context()?;
-        if !time_valid(&ctx) {
+        if !time_valid(&ctx, time.as_ref()) {
             return Err(io::Error::other(
                 "certificate chain validation failed: certificate is expired or not yet valid",
             ));
         }
         if let Some(root) = roots.iter().find(|r| issued_by(&ctx, r)) {
             let root_ctx = root.context()?;
-            return if time_valid(&root_ctx) {
+            return if time_valid(&root_ctx, time.as_ref()) {
                 Ok(())
             } else {
                 Err(io::Error::other(
@@ -257,8 +275,17 @@ fn signature_verifies(subject: &CertContext, issuer: &CertContext) -> bool {
     }
 }
 
-fn time_valid(ctx: &CertContext) -> bool {
-    unsafe { CertVerifyTimeValidity(ptr::null(), ctx.info()) == 0 }
+fn unix_time_to_filetime(unix_time: i64) -> io::Result<FILETIME> {
+    let ticks = unix_time_to_filetime_ticks(unix_time)?;
+    Ok(FILETIME {
+        dwLowDateTime: ticks as u32,
+        dwHighDateTime: (ticks >> 32) as u32,
+    })
+}
+
+fn time_valid(ctx: &CertContext, time: Option<&FILETIME>) -> bool {
+    let time = time.map_or(ptr::null(), ptr::from_ref);
+    unsafe { CertVerifyTimeValidity(time, ctx.info()) == 0 }
 }
 
 /// Whether the certificate may sign other certificates. X.509 v1 certificates
@@ -502,6 +529,37 @@ impl Drop for KeyHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unix_time_to_filetime_boundaries() {
+        for (seconds, ticks) in [
+            (0, 116_444_736_000_000_000u64),
+            (1, 116_444_736_010_000_000),
+            (910_692_730_085, 9_223_372_036_850_000_000),
+        ] {
+            let time = unix_time_to_filetime(seconds).unwrap();
+            assert_eq!(
+                (u64::from(time.dwHighDateTime) << 32) | u64::from(time.dwLowDateTime),
+                ticks
+            );
+        }
+        for seconds in [-1, i64::MIN, 910_692_730_086, i64::MAX] {
+            assert_eq!(
+                unix_time_to_filetime(seconds).err().unwrap().kind(),
+                io::ErrorKind::InvalidInput
+            );
+        }
+    }
+
+    #[test]
+    fn cert_to_der_roundtrip() {
+        let pem = include_bytes!("../testdata/snp_vcek_chain_turin.pem");
+        let cert = cert_from_pem(pem).unwrap();
+        let der = cert_to_der(&cert).unwrap();
+        assert_eq!(der, pem_blocks(pem).unwrap()[0]);
+        let parsed = Cert::from_der(der.clone()).unwrap();
+        assert_eq!(cert_to_der(&parsed).unwrap(), der);
+    }
 
     #[test]
     fn fixed_width_be_pads_and_trims() {

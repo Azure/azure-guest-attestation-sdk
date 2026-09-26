@@ -238,7 +238,8 @@ pub struct TdQuoteBodyTdx15Ex {
     pub init_cpu_svn: [u8; 16],
     /// TD's initial TEE_TCB_SVN from creation.
     pub init_tee_tcb_svn: [u8; 16],
-    /// FMSPC of the model that INIT_TEE_TCB_SVN was captured on.
+    /// Initial-platform model encoding (three little-endian u32 words), not
+    /// a raw six-byte Intel FMSPC. Word 1 contains the CPUID leaf-1 EAX value.
     pub init_tee_fmspc: [u8; 12],
     /// Current SERVTD_HASH (non-NRX) or migration policy hash (NRX).
     pub curr_server_td_hash: [u8; 48],
@@ -247,6 +248,14 @@ pub struct TdQuoteBodyTdx15Ex {
 }
 
 // Lock the wire sizes of the TD quote body layouts (bytes).
+impl TdQuoteBodyTdx15Ex {
+    /// Whether TD ATTRIBUTES.SERVTD_EXT (bit 17) makes the initial-platform
+    /// fields semantically applicable. Parsing the extension is not verification.
+    pub fn servtd_ext(&self) -> bool {
+        u64::from_le_bytes(self.base.base.td_attributes) & (1 << 17) != 0
+    }
+}
+
 const _: () = {
     assert!(TD_QUOTE_BODY_V1_0_SIZE == 584);
     assert!(TD_QUOTE_BODY_V1_5_SIZE == 648);
@@ -1435,6 +1444,52 @@ fn read_der_length(bytes: &[u8]) -> Result<(usize, usize), FmspcExtractError> {
 mod tests {
     use super::*;
     use core::mem::{align_of, size_of};
+
+    #[test]
+    fn parses_real_service_td_migration_fields() {
+        let quote = include_bytes!("../verify/testdata/oe_tdx_v5_servtd_quote.bin");
+        let parsed = parse_td_quote(quote).unwrap();
+        assert_eq!(parsed.header.version, 5);
+        assert_eq!(parsed.body_header.body_type, 4);
+        assert_eq!(parsed.body_header.size, 885);
+        assert_eq!(parsed.signature_data_len, 4304);
+        assert!(parsed.remainder.is_empty());
+        let TdQuoteBody::Tdx15Ex(body) = &parsed.body else {
+            panic!("expected Service-TD body");
+        };
+        assert!(body.servtd_ext());
+        let wire = &quote[54..54 + 885];
+        assert_eq!(body.vmid, wire[648]);
+        for (field, start, end) in [
+            (body.td_id.as_slice(), 649, 681),
+            (body.devinfo.as_slice(), 681, 729),
+            (body.init_server_td_hash.as_slice(), 729, 777),
+            (body.init_server_td_attr.as_slice(), 777, 785),
+            (body.init_cpu_svn.as_slice(), 785, 801),
+            (body.init_tee_tcb_svn.as_slice(), 801, 817),
+            (body.init_tee_fmspc.as_slice(), 817, 829),
+            (body.curr_server_td_hash.as_slice(), 829, 877),
+            (body.curr_server_td_attr.as_slice(), 877, 885),
+        ] {
+            assert_eq!(field, &wire[start..end]);
+        }
+        assert_eq!(hex::encode(body.init_tee_fmspc), "00000000f0060c0000000080");
+        let pretty = pretty_td_quote(&parsed);
+        for name in [
+            "td_id",
+            "devinfo",
+            "init_cpu_svn",
+            "init_tee_tcb_svn",
+            "init_tee_fmspc",
+        ] {
+            assert!(pretty.contains(name), "missing {name}");
+        }
+        let mut body = *body;
+        body.base.base.td_attributes = (1u64 << 29).to_le_bytes();
+        assert!(!body.servtd_ext(), "migratable is not SERVTD_EXT");
+        body.base.base.td_attributes = (1u64 << 17).to_le_bytes();
+        assert!(body.servtd_ext());
+    }
 
     #[test]
     fn sizes_match_spec() {
