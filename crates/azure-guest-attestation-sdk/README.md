@@ -94,6 +94,47 @@ for (index, digest) in &pcrs {
 let (report, claims) = get_cvm_report(&tpm, Some(b"user-data"))?;
 ```
 
+## Local TDX migration-field and TCB verification
+
+With the `verify` feature, `verify::verify_td_quote()` verifies quote signatures
+and the PCK chain, and returns all signed type-4 migration fields in
+`TdxVerifyResult::service_td`. `TdQuoteBodyTdx15Ex::servtd_ext()` checks bit 17 of
+TD attributes; this is distinct from the migratable bit. `init_tee_fmspc` is a
+12-byte model encoding, **not a six-byte FMSPC**.
+
+For authenticated TCB Info assessment use
+`verify::verify_td_quote_with_collateral(&quote, &collateral, &policy)`:
+
+- `TdxCollateral` accepts signed Intel TDX TCB Info JSON plus its PEM issuer
+  chain. `from_flattened_endorsements()` safely extracts these from a flattened x64
+  v4 bundle; serialized pointer slots are never used.
+- TCB Info signatures and both certificate chains are checked against the pinned
+  Intel root. Collateral FMSPC/PCE ID must match the authenticated PCK.
+- SVN comparisons are componentwise, with separate module identity/ISVSVN checks
+  for later modules. Current, launch and required initial assessments retain their
+  own status/date/reason. Initial PCESVN and initial module signer/attributes are
+  absent from the extension and cannot be verified.
+- Initial-model matching uses a narrowly defined Emerald Rapids allowlist. Unknown models
+  or missing required module identities yield `NotEvaluated` rather than reusing
+  current-platform status. No generic CPUID-to-FMSPC equivalence is assumed.
+- Certificate and TCB Info validity use one time, current by default. Historical
+  `TdxTcbPolicy::verification_time` is explicit and does not prove current freshness.
+  `baseline_date` is an opt-in certification-date policy relaxation, never an expiry or
+  signature bypass. Inspect all statuses, not only the aggregate (which is not a
+  total severity ordering).
+
+**This does not implement full Intel DCAP/QVL:** CRLs, QE identity collateral,
+migration continuity, and allowed Service-TD hashes are not evaluated. A returned
+result means cryptographic inputs authenticated; callers must evaluate statuses
+and their own policy. The companion CLI enforces every assessed component UpToDate
+and prints scope/unchecked-check indicators; see its
+[documentation](../../tools/azure-guest-local-verify/README.md).
+
+The public Service-TD fixture has no common certificate/TCB Info validity window. Its
+signatures and TCB matching are tested separately; production correctly rejects
+the stale bundle. Positive end-to-end tests use synthetic signed collateral with
+test-only roots, which the public Intel-pinned API rejects.
+
 ## Testing
 
 The SDK ships with comprehensive tests backed by the

@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **TDX Service-TD / live-migration TCB Info assessment.**
+  `verify_td_quote_with_collateral()` authenticates signed Intel TCB Info to the
+  pinned Intel root, checks certificate/collateral freshness and PCK FMSPC/PCE-ID
+  binding, and reports current, launch, and initial-platform/module TCB states.
+  `SERVTD_EXT` gates initial evaluation; its 12-byte model encoding uses the
+  conservative Emerald Rapids allowlist rather than raw FMSPC equality.
+  Unsupported initial models produce `NotEvaluated`, never an implicit pass.
+  The existing signature-only API now returns the signed Service-TD fields.
+  - Local CLI accepts flattened x64 `--endorsements`, or `--tcb-info` plus
+    `--tcb-issuer-chain`, explicit `--verification-time`, and opt-in
+    `--tcb-baseline-date`. It requires every evaluated TCB component UpToDate.
+  - This is **not full DCAP/QVL verification**: CRLs, QE identity, Service-TD
+    hash allowlists and migration continuity policies are not evaluated.
+  - Public Service-TD fixtures, wire-offset/signature-tampering tests and synthetic
+    signed-collateral tests cover the implementation. The sample bundle's dates are
+    inconsistent; full validation intentionally rejects it as stale.
+
 - **Local (offline) attestation verification** behind a new `verify` feature
   (requires the `native` backend: OpenSSL on Linux, CNG + crypt32 on Windows).
   - `verify::verify_snp_report()` validates an AMD SEV-SNP report's VCEK chain
@@ -57,6 +74,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - New `AttestOptions::user_data` and `PlatformAttestOptions::user_data`.
 
 ### Fixed
+
+- Update the locked `rustls` dependency to 0.23.45 for RUSTSEC-2026-0285.
 
 - **`verify::verify_td_quote()` rejected TDX 1.5 Service-TD extended quotes.**
   The parser understands `body_type` 4 (`TdQuoteBody::Tdx15Ex`), but the

@@ -3,12 +3,13 @@
 
 //! OpenSSL implementation of the [`super`] crypto interface (Linux).
 
-use super::{other, DigestAlg};
+use super::{other, unix_time_to_filetime_ticks, DigestAlg};
 use openssl::bn::BigNum;
 use openssl::ecdsa::EcdsaSig;
 use openssl::hash::{hash, MessageDigest};
 use openssl::stack::Stack;
 use openssl::x509::store::X509StoreBuilder;
+use openssl::x509::verify::X509VerifyParam;
 use openssl::x509::{X509StoreContext, X509VerifyResult, X509};
 use std::io;
 
@@ -46,6 +47,13 @@ pub(crate) fn cert_from_pem(pem: &[u8]) -> io::Result<Cert> {
     Ok(Cert(
         X509::from_pem(pem).map_err(|e| other("parse PEM certificate", e))?,
     ))
+}
+
+/// Encode a certificate as DER.
+pub(crate) fn cert_to_der(cert: &Cert) -> io::Result<Vec<u8>> {
+    cert.0
+        .to_der()
+        .map_err(|e| other("encode DER certificate", e))
 }
 
 /// Whether `cert` is self-signed (subject == issuer and the signature verifies
@@ -122,7 +130,40 @@ pub(crate) fn verify_cert_chain(
     intermediates: &[Cert],
     roots: &[Cert],
 ) -> io::Result<()> {
+    verify_cert_chain_at(leaf, intermediates, roots, None)
+}
+
+/// Validate a chain against pinned `roots` at `unix_time`, or the wall clock
+/// when `None`. Explicit times must be nonnegative and fit both the shared
+/// FILETIME range and native `time_t`; invalid times return `InvalidInput`.
+pub(crate) fn verify_cert_chain_at(
+    leaf: &Cert,
+    intermediates: &[Cert],
+    roots: &[Cert],
+    unix_time: Option<i64>,
+) -> io::Result<()> {
+    let param = unix_time
+        .map(|seconds| -> io::Result<_> {
+            unix_time_to_filetime_ticks(seconds)?;
+            // time_t is i64 here on 64-bit Linux, but can be narrower elsewhere.
+            #[allow(clippy::useless_conversion)]
+            let time = seconds.try_into().map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "certificate validation time is outside native time_t range",
+                )
+            })?;
+            let mut param = X509VerifyParam::new().map_err(|e| other("X509 verify param", e))?;
+            param.set_time(time);
+            Ok(param)
+        })
+        .transpose()?;
     let mut store_builder = X509StoreBuilder::new().map_err(|e| other("X509 store", e))?;
+    if let Some(param) = param {
+        store_builder
+            .set_param(&param)
+            .map_err(|e| other("set X509 verify param", e))?;
+    }
     for root in roots {
         store_builder
             .add_cert(root.0.clone())
@@ -154,6 +195,7 @@ pub(crate) fn verify_cert_chain(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use openssl::asn1::Asn1Time;
     use openssl::ec::{EcGroup, EcKey};
     use openssl::nid::Nid;
     use openssl::pkey::PKey;
@@ -204,10 +246,8 @@ mod tests {
         roundtrip(Nid::SECP384R1, DigestAlg::Sha384);
     }
 
-    #[test]
-    fn cert_chain_valid_and_invalid() {
+    fn cert_chain(not_before: Asn1Time, not_after: Asn1Time) -> (Cert, Cert) {
         // root (self-signed CA) -> leaf signed by root.
-        use openssl::asn1::Asn1Time;
         use openssl::x509::extension::BasicConstraints;
         use openssl::x509::{X509Builder, X509NameBuilder};
 
@@ -223,10 +263,8 @@ mod tests {
         rb.set_pubkey(&root_key).unwrap();
         rb.set_subject_name(&rn).unwrap();
         rb.set_issuer_name(&rn).unwrap();
-        rb.set_not_before(&Asn1Time::days_from_now(0).unwrap())
-            .unwrap();
-        rb.set_not_after(&Asn1Time::days_from_now(1).unwrap())
-            .unwrap();
+        rb.set_not_before(&not_before).unwrap();
+        rb.set_not_after(&not_after).unwrap();
         rb.append_extension(BasicConstraints::new().critical().ca().build().unwrap())
             .unwrap();
         rb.sign(&root_key, MessageDigest::sha384()).unwrap();
@@ -240,16 +278,64 @@ mod tests {
         lb.set_pubkey(&leaf_key).unwrap();
         lb.set_subject_name(&ln).unwrap();
         lb.set_issuer_name(&rn).unwrap();
-        lb.set_not_before(&Asn1Time::days_from_now(0).unwrap())
-            .unwrap();
-        lb.set_not_after(&Asn1Time::days_from_now(1).unwrap())
-            .unwrap();
+        lb.set_not_before(&not_before).unwrap();
+        lb.set_not_after(&not_after).unwrap();
         lb.sign(&root_key, MessageDigest::sha384()).unwrap();
         let leaf = Cert(lb.build());
 
+        (leaf, root)
+    }
+
+    #[test]
+    fn cert_chain_valid_and_invalid() {
+        let (leaf, root) = cert_chain(
+            Asn1Time::days_from_now(0).unwrap(),
+            Asn1Time::days_from_now(1).unwrap(),
+        );
         // Valid: leaf -> root.
         assert!(verify_cert_chain(&leaf, &[], std::slice::from_ref(&root)).is_ok());
         // Invalid: leaf with an untrusted (empty) root set.
         assert!(verify_cert_chain(&leaf, &[], &[]).is_err());
+    }
+
+    #[test]
+    fn cert_chain_explicit_time_checks_validity_and_trust() {
+        // Valid only during 2000, independent of the wall clock.
+        let (leaf, root) = cert_chain(
+            Asn1Time::from_unix(946_684_800).unwrap(),
+            Asn1Time::from_unix(978_307_200).unwrap(),
+        );
+        let roots = std::slice::from_ref(&root);
+        assert!(verify_cert_chain_at(&leaf, &[], roots, Some(962_409_600)).is_ok());
+        let expired = verify_cert_chain_at(&leaf, &[], roots, Some(1_009_843_200)).unwrap_err();
+        assert!(expired.to_string().contains("expired"), "{expired}");
+        let not_yet_valid = verify_cert_chain_at(&leaf, &[], roots, Some(915_148_800)).unwrap_err();
+        assert!(
+            not_yet_valid.to_string().contains("not yet valid"),
+            "{not_yet_valid}"
+        );
+        assert!(verify_cert_chain_at(&leaf, &[], &[], Some(962_409_600)).is_err());
+        assert!(verify_cert_chain(&leaf, &[], roots).is_err());
+        assert!(verify_cert_chain_at(&leaf, &[], roots, None).is_err());
+
+        for time in [-1, i64::MIN, 910_692_730_086, i64::MAX] {
+            assert_eq!(
+                verify_cert_chain_at(&leaf, &[], roots, Some(time))
+                    .unwrap_err()
+                    .kind(),
+                io::ErrorKind::InvalidInput
+            );
+        }
+    }
+
+    #[test]
+    fn cert_to_der_roundtrip() {
+        let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
+        let key = PKey::from_ec_key(EcKey::generate(&group).unwrap()).unwrap();
+        let cert = Cert(self_signed(&key));
+        let der = cert_to_der(&cert).unwrap();
+        assert_eq!(der, cert.0.to_der().unwrap());
+        let parsed = Cert(X509::from_der(&der).unwrap());
+        assert_eq!(cert_to_der(&parsed).unwrap(), der);
     }
 }

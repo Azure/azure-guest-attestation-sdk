@@ -18,6 +18,11 @@ mod crypto;
 mod roots;
 pub mod snp;
 pub mod tdx;
+pub mod tdx_tcb;
 
 pub use snp::{verify_snp_report, SnpMeasurements, SnpVerifyPolicy, SnpVerifyResult};
 pub use tdx::{verify_td_quote, TdxMeasurements, TdxVerifyPolicy, TdxVerifyResult};
+pub use tdx_tcb::{
+    verify_td_quote_with_collateral, TcbAssessment, TcbStatus, TdxCollateral,
+    TdxCollateralVerifyResult, TdxTcbPolicy, TdxTcbResult,
+};
