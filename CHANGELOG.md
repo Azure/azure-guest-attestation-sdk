@@ -14,16 +14,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pinned Intel root, checks certificate/collateral freshness and PCK FMSPC/PCE-ID
   binding, and reports current, launch, and initial-platform/module TCB states.
   `SERVTD_EXT` gates initial evaluation; its 12-byte model encoding uses the
-  conservative mapping from Open Enclave PR #5108 rather than raw FMSPC equality.
+  conservative Emerald Rapids allowlist rather than raw FMSPC equality.
   Unsupported initial models produce `NotEvaluated`, never an implicit pass.
   The existing signature-only API now returns the signed Service-TD fields.
-  - Local CLI accepts OE x64 `--endorsements`, or `--tcb-info` plus
+  - Local CLI accepts flattened x64 `--endorsements`, or `--tcb-info` plus
     `--tcb-issuer-chain`, explicit `--verification-time`, and opt-in
     `--tcb-baseline-date`. It requires every evaluated TCB component UpToDate.
   - This is **not full DCAP/QVL verification**: CRLs, QE identity, Service-TD
     hash allowlists and migration continuity policies are not evaluated.
-  - Public OE fixtures, wire-offset/signature-tampering tests and synthetic
-    signed-collateral tests cover the implementation. The OE bundle's dates are
+  - Public Service-TD fixtures, wire-offset/signature-tampering tests and synthetic
+    signed-collateral tests cover the implementation. The sample bundle's dates are
     inconsistent; full validation intentionally rejects it as stale.
 
 - **Local (offline) attestation verification** behind a new `verify` feature

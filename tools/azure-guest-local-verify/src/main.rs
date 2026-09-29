@@ -172,7 +172,7 @@ mod imp {
         policy.baseline_date = args.tcb_baseline_date;
         if let Some(path) = &args.endorsements {
             let bundle = read(path)?;
-            let collateral = verify::TdxCollateral::from_oe_endorsements(&bundle)?;
+            let collateral = verify::TdxCollateral::from_flattened_endorsements(&bundle)?;
             let result = verify::verify_td_quote_with_collateral(&bytes, &collateral, &policy)?;
             Ok(collateral_result(&result))
         } else if let (Some(info), Some(chain)) = (&args.tcb_info, &args.tcb_issuer_chain) {
@@ -399,7 +399,7 @@ mod imp {
         fn rejected_assessment_keeps_rich_json_and_dates() {
             // Synthetic TCB results test CLI policy/output only. The real expired
             // fixture is never represented as passing collateral authentication.
-            let bytes = include_bytes!("../../../crates/azure-guest-attestation-sdk/src/verify/testdata/oe_tdx_v5_servtd_quote.bin");
+            let bytes = include_bytes!("../../../crates/azure-guest-attestation-sdk/src/verify/testdata/servtd_tdx_v5_quote.bin");
             let mut policy = verify::TdxVerifyPolicy::default();
             policy.verification_time = Some(1790294400);
             let quote = verify::verify_td_quote(bytes, &policy).unwrap();

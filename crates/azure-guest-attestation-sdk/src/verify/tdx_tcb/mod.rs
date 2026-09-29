@@ -36,13 +36,13 @@ impl<'a> TdxCollateral<'a> {
     /// Ignores pointer slots, uses checked lengths, and rejects trailing data.
     /// Only TCB Info and its issuer chain are used; this does not verify CRLs
     /// or QE identity included in the bundle.
-    pub fn from_oe_endorsements(bytes: &'a [u8]) -> io::Result<Self> {
+    pub fn from_flattened_endorsements(bytes: &'a [u8]) -> io::Result<Self> {
         if bytes.len() < 120 || bytes.len() > 16 * 1024 * 1024 {
-            return Err(invalid("invalid OE x64 collateral size"));
+            return Err(invalid("invalid flattened x64 collateral size"));
         }
         let u32_at = |offset| u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
         if u32_at(0) != 4 || u32_at(4) != 0x81 {
-            return Err(invalid("expected OE x64 collateral v4 for TDX"));
+            return Err(invalid("expected flattened x64 collateral v4 for TDX"));
         }
         let mut sections = [&[][..]; 7];
         let mut cursor = 120usize;
@@ -53,11 +53,13 @@ impl<'a> TdxCollateral<'a> {
                 .ok_or_else(|| invalid("collateral length overflow"))?;
             *section = bytes
                 .get(cursor..end)
-                .ok_or_else(|| invalid("truncated OE collateral section"))?;
+                .ok_or_else(|| invalid("truncated flattened collateral section"))?;
             cursor = end;
         }
         if cursor != bytes.len() || sections[3].is_empty() || sections[4].is_empty() {
-            return Err(invalid("missing TCB Info or trailing OE collateral bytes"));
+            return Err(invalid(
+                "missing TCB Info or trailing flattened collateral bytes",
+            ));
         }
         Ok(Self {
             tcb_info: sections[4],
@@ -437,8 +439,8 @@ fn pck_tcb(der: &[u8]) -> io::Result<PckTcb> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    const QUOTE: &[u8] = include_bytes!("../testdata/oe_tdx_v5_servtd_quote.bin");
-    const COLLATERAL: &[u8] = include_bytes!("../testdata/oe_tdx_v5_servtd_endorsements.bin");
+    const QUOTE: &[u8] = include_bytes!("../testdata/servtd_tdx_v5_quote.bin");
+    const COLLATERAL: &[u8] = include_bytes!("../testdata/servtd_tdx_v5_endorsements.bin");
     fn policy() -> TdxTcbPolicy {
         TdxTcbPolicy {
             verification_time: Some(1790294400),
@@ -448,7 +450,7 @@ mod tests {
 
     #[test]
     fn real_service_td_tcb_and_signed_fields() {
-        let collateral = TdxCollateral::from_oe_endorsements(COLLATERAL).unwrap();
+        let collateral = TdxCollateral::from_flattened_endorsements(COLLATERAL).unwrap();
         // This public fixture has incompatible certificate/collateral dates.
         // Test authenticated fields and matching separately, NOT as a full pass.
         let now = policy().verification_time.unwrap();
@@ -480,7 +482,7 @@ mod tests {
 
     #[test]
     fn expired_collateral_is_not_a_current_pass() {
-        let collateral = TdxCollateral::from_oe_endorsements(COLLATERAL).unwrap();
+        let collateral = TdxCollateral::from_flattened_endorsements(COLLATERAL).unwrap();
         let mut policy = policy();
         policy.verification_time = Some(1790294400);
         assert!(verify_td_quote_with_collateral(QUOTE, &collateral, &policy)
@@ -491,7 +493,7 @@ mod tests {
 
     #[test]
     fn tampered_tcb_info_and_migration_fields_fail() {
-        let original = TdxCollateral::from_oe_endorsements(COLLATERAL).unwrap();
+        let original = TdxCollateral::from_flattened_endorsements(COLLATERAL).unwrap();
         let mut json = original.tcb_info.to_vec();
         let pos = json.windows(8).position(|s| s == b"UpToDate").unwrap();
         json[pos] = b'X';
@@ -511,15 +513,15 @@ mod tests {
     }
 
     #[test]
-    fn oe_bundle_rejects_truncation_lengths_and_tail() {
+    fn flattened_bundle_rejects_truncation_lengths_and_tail() {
         for n in [0, 119, 120, COLLATERAL.len() - 1] {
-            assert!(TdxCollateral::from_oe_endorsements(&COLLATERAL[..n]).is_err());
+            assert!(TdxCollateral::from_flattened_endorsements(&COLLATERAL[..n]).is_err());
         }
         let mut bytes = COLLATERAL.to_vec();
         bytes[16..20].copy_from_slice(&u32::MAX.to_le_bytes());
-        assert!(TdxCollateral::from_oe_endorsements(&bytes).is_err());
+        assert!(TdxCollateral::from_flattened_endorsements(&bytes).is_err());
         let mut bytes = COLLATERAL.to_vec();
         bytes.push(0);
-        assert!(TdxCollateral::from_oe_endorsements(&bytes).is_err());
+        assert!(TdxCollateral::from_flattened_endorsements(&bytes).is_err());
     }
 }

@@ -1447,7 +1447,7 @@ mod tests {
 
     #[test]
     fn parses_real_service_td_migration_fields() {
-        let quote = include_bytes!("../verify/testdata/oe_tdx_v5_servtd_quote.bin");
+        let quote = include_bytes!("../verify/testdata/servtd_tdx_v5_quote.bin");
         let parsed = parse_td_quote(quote).unwrap();
         assert_eq!(parsed.header.version, 5);
         assert_eq!(parsed.body_header.body_type, 4);

@@ -11,12 +11,12 @@ pinned hardware roots. Supported on Linux (OpenSSL) and Windows (CNG/crypt32).
   `verification_scope: "signature_and_chain"`, `tcb_checked: false`, and no
   `tcb` object. `passed` means these signature/chain checks succeeded, **not**
   that TCB status, revocation, or migration policy was approved.
-- **Authenticated TCB Info:** add `--endorsements PATH` for an OE flattened
+- **Authenticated TCB Info:** add `--endorsements PATH` for a flattened
   **x64** v4 TDX collateral bundle, or provide both `--tcb-info PATH` and
   `--tcb-issuer-chain PATH` (signed Intel TDX TCB Info JSON and PEM signing
   certificate chain). These input forms are mutually exclusive.
   JSON reports `verification_scope: "signature_and_chain_and_tcb_info"`.
-  Only TCB Info and its issuer chain are consumed from the OE bundle.
+  Only TCB Info and its issuer chain are consumed from the bundle.
 
 Both bare and QGS-wrapped quotes are supported. Add `--json` before or after
 the subcommand for machine-readable output.
@@ -89,7 +89,7 @@ migration-policy approval.
 
 ## Public fixture caveat
 
-The SDK's read-only Open Enclave Service-TD quote and endorsements samples
+The SDK's read-only Service-TD quote and endorsements samples
 have **no common valid verification time**: TCB Info is valid from
 2024-07-15 until 2024-08-14, the TCB signing certificate starts in 2025, and
 the quote's PCK certificate starts in 2026. Default collateral verification

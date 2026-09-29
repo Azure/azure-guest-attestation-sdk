@@ -20,7 +20,7 @@ fn fixture(name: &str) -> PathBuf {
 fn command() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_azure-guest-local-verify"));
     command.args(["--json", "tdx"]);
-    command.arg(fixture("oe_tdx_v5_servtd_quote.bin"));
+    command.arg(fixture("servtd_tdx_v5_quote.bin"));
     command
 }
 
@@ -105,7 +105,7 @@ fn expired_endorsements_rejected_at_explicit_and_default_times() {
     for historical in [false, true] {
         let mut cmd = command();
         cmd.arg("--endorsements")
-            .arg(fixture("oe_tdx_v5_servtd_endorsements.bin"));
+            .arg(fixture("servtd_tdx_v5_endorsements.bin"));
         if historical {
             cmd.args([
                 "--verification-time",
@@ -134,8 +134,8 @@ fn expired_endorsements_rejected_at_explicit_and_default_times() {
 #[test]
 fn separate_collateral_files_are_accepted_but_still_enforce_freshness() {
     use azure_guest_attestation_sdk::verify::TdxCollateral;
-    let bundle = std::fs::read(fixture("oe_tdx_v5_servtd_endorsements.bin")).unwrap();
-    let collateral = TdxCollateral::from_oe_endorsements(&bundle).unwrap();
+    let bundle = std::fs::read(fixture("servtd_tdx_v5_endorsements.bin")).unwrap();
+    let collateral = TdxCollateral::from_flattened_endorsements(&bundle).unwrap();
     let dir = std::env::temp_dir().join(format!("tdx-cli-collateral-{}", std::process::id()));
     std::fs::create_dir(&dir).unwrap();
     // Only temporary copies are written; the SDK fixtures remain read-only.
@@ -188,7 +188,7 @@ fn signature_only_without_time_still_uses_existing_path() {
 fn human_output_includes_migration_fields_and_verification_limits() {
     let output = Command::new(env!("CARGO_BIN_EXE_azure-guest-local-verify"))
         .arg("tdx")
-        .arg(fixture("oe_tdx_v5_servtd_quote.bin"))
+        .arg(fixture("servtd_tdx_v5_quote.bin"))
         .args(["--verification-time", VALID_CERT_TIME])
         .output()
         .unwrap();
@@ -222,7 +222,7 @@ fn human_output_includes_migration_fields_and_verification_limits() {
 fn malformed_collateral_never_falls_back_to_signature_only() {
     let output = command()
         .arg("--endorsements")
-        .arg(fixture("oe_tdx_v5_servtd_quote.bin"))
+        .arg(fixture("servtd_tdx_v5_quote.bin"))
         .args(["--verification-time", VALID_CERT_TIME])
         .output()
         .unwrap();

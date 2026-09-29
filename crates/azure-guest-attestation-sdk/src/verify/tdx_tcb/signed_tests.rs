@@ -19,8 +19,8 @@ use serde_json::json;
 
 const NOW: i64 = 1_790_294_400;
 const SIGNER: &str = "Intel SGX TCB Signing";
-const QUOTE: &[u8] = include_bytes!("../testdata/oe_tdx_v5_servtd_quote.bin");
-const ENDORSEMENTS: &[u8] = include_bytes!("../testdata/oe_tdx_v5_servtd_endorsements.bin");
+const QUOTE: &[u8] = include_bytes!("../testdata/servtd_tdx_v5_quote.bin");
+const ENDORSEMENTS: &[u8] = include_bytes!("../testdata/servtd_tdx_v5_endorsements.bin");
 
 fn key() -> PKey<Private> {
     let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
@@ -84,7 +84,7 @@ impl Fixture {
             roots::intel_sgx_root().unwrap(),
             crypto::cert_from_pem(&root_pem).unwrap(),
         ];
-        let original = TdxCollateral::from_oe_endorsements(ENDORSEMENTS).unwrap();
+        let original = TdxCollateral::from_flattened_endorsements(ENDORSEMENTS).unwrap();
         let raw = original.tcb_info.strip_suffix(&[0]).unwrap();
         let mut info = serde_json::from_slice::<Value>(raw).unwrap()["tcbInfo"].take();
         info["issueDate"] = json!("2026-09-24T00:00:00Z");
