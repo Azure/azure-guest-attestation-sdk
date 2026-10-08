@@ -19,6 +19,7 @@ anyhow.workspace = true
 [target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
 azure-guest-attestation-sdk = { path = "../../crates/azure-guest-attestation-sdk", version = "0.1.0", default-features = false, features = ["verify"] }
 clap.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

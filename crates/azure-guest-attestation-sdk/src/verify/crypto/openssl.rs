@@ -48,6 +48,13 @@ pub(crate) fn cert_from_pem(pem: &[u8]) -> io::Result<Cert> {
     ))
 }
 
+/// Encode the authenticated certificate as DER for VCEK extension checks.
+pub(crate) fn cert_to_der(cert: &Cert) -> io::Result<Vec<u8>> {
+    cert.0
+        .to_der()
+        .map_err(|error| other("encode DER certificate", error))
+}
+
 /// Whether `cert` is self-signed (subject == issuer and the signature verifies
 /// under its own public key).
 pub(crate) fn cert_is_self_signed(cert: &Cert) -> bool {

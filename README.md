@@ -4,12 +4,18 @@
 
 Azure Attestation SDK for Confidential VMs (Intel TDX, AMD SEV-SNP) and TrustedLaunch VMs on Azure, providing TPM 2.0 operations and TEE attestation capabilities.
 
+## Documentation
+
+The [design documentation index](doc/README.md) links architecture and
+topic-specific design notes. Crate and tool READMEs focus on setup and usage.
+
 ## Repository Structure
 
 ```
 ├── Cargo.toml                      # Workspace root
 ├── .cargo/config.toml              # Cargo aliases (cargo nt, cargo vt)
 ├── .config/nextest.toml            # cargo-nextest configuration
+├── doc/                           # Design documentation and topic index
 ├── crates/
 │   ├── azure-tpm/                         # Platform-agnostic TPM 2.0 crate
 │   └── azure-guest-attestation-sdk/       # Core attestation library (depends on azure-tpm)
