@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- SNP semantic verification: mandatory exact-length/version/signer/algorithm
+  checks and VCEK product-generation, reported-TCB, and HWID bindings, in
+  addition to signatures and pinned AMD chain validation. Unsupported or
+  malformed evidence now fails rather than passing signature-only verification.
+  CPUID/mitigation-vector accessors preserve the existing report layout. The
+  local CLI explicitly reports binding checks and unchecked policy/revocation.
+  This slice does not add stepping equivalence, VLEK, masked chip IDs, CRLs,
+  minimum-TCB/measurement policy, or direct SNP device collection.
+
 - **Local (offline) attestation verification** behind a new `verify` feature
   (requires the `native` backend: OpenSSL on Linux, CNG + crypt32 on Windows).
   - `verify::verify_snp_report()` validates an AMD SEV-SNP report's VCEK chain

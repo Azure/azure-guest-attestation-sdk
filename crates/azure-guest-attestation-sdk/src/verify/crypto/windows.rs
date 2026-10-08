@@ -86,6 +86,11 @@ pub(crate) fn cert_from_pem(pem: &[u8]) -> io::Result<Cert> {
     Cert::from_der(der)
 }
 
+/// Return the authenticated certificate's DER for VCEK extension checks.
+pub(crate) fn cert_to_der(cert: &Cert) -> io::Result<Vec<u8>> {
+    Ok(cert.der.clone())
+}
+
 /// Whether `cert` is self-signed (subject == issuer and the signature verifies
 /// under its own public key).
 pub(crate) fn cert_is_self_signed(cert: &Cert) -> bool {
