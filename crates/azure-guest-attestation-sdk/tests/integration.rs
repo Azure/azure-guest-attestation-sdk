@@ -311,23 +311,10 @@ fn pcr_quote_parse_roundtrip() {
     assert!(!attest.is_empty());
     assert!(!sig.is_empty());
 
-    // Parse the attestation structure.
-    // The reference TPM may produce slightly different TPMS_ATTEST layouts;
-    // verify that the parser doesn't panic and returns Ok or a clean error.
-    match azure_guest_attestation_sdk::tpm::types::parse_quote_attestation(&attest) {
-        Ok(parsed) => {
-            // If it parses successfully, verify structural properties
-            assert!(
-                !parsed.pcr_selections.is_empty() || !parsed.pcr_digests.is_empty(),
-                "Parsed quote should have PCR selections or digests"
-            );
-        }
-        Err(e) => {
-            // Parser may fail on some reference TPM output (e.g. different
-            // digest format); that's OK — we just verify no panic.
-            eprintln!("parse_quote_attestation returned error (non-fatal): {e}");
-        }
-    }
+    let parsed = azure_guest_attestation_sdk::tpm::types::parse_quote_attestation(&attest)
+        .expect("parse quote attestation");
+    assert!(!parsed.pcr_selections.is_empty());
+    assert!(!parsed.pcr_digest.is_empty());
 }
 
 /// Verify that `get_ak_cert_trimmed` produces output ≤ `get_ak_cert` length.
