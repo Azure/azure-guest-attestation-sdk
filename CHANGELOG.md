@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `azure-guest-attest tee-report PATH --type snp|tdx` inspects saved raw SNP
+  and TDX reports offline without TPM or network access. Parsed output checks
+  the exact report size but does not verify signatures or MACs. `--hex` and
+  `--base64` support encoded output for both saved and platform reports.
+
+- SNP semantic verification: mandatory exact-length/version/signer/algorithm
+  checks and VCEK product-generation, reported-TCB, and HWID bindings, in
+  addition to signatures and pinned AMD chain validation. Unsupported or
+  malformed evidence now fails rather than passing signature-only verification.
+  CPUID/mitigation-vector accessors preserve the existing report layout. The
+  local CLI explicitly reports binding checks and unchecked policy/revocation.
+  This slice does not add stepping equivalence, VLEK, masked chip IDs, CRLs,
+  minimum-TCB/measurement policy, or direct SNP device collection.
+
 - **Local (offline) attestation verification** behind a new `verify` feature
   (requires the `native` backend: OpenSSL on Linux, CNG + crypt32 on Windows).
   - `verify::verify_snp_report()` validates an AMD SEV-SNP report's VCEK chain
@@ -56,7 +70,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     transport-level metadata in the request JSON and is not bound to the report.
   - New `AttestOptions::user_data` and `PlatformAttestOptions::user_data`.
 
+### Changed
+
+- **Breaking:** `azure-guest-attest tee-report --raw` now emits binary bytes,
+  consistent with `td-quote --raw`. Use `--hex` for the previous hex-text output.
+  Malformed platform reports now produce an error rather than a successful
+  truncation notice when requesting parsed output.
+
 ### Fixed
+
+- Update locked `quinn-proto`, `rustls`, `rustls-webpki`, and `webpki-roots`
+  dependencies to patched releases, resolving RustSec audit failures without
+  suppressing advisories.
 
 - **`verify::verify_td_quote()` rejected TDX 1.5 Service-TD extended quotes.**
   The parser understands `body_type` 4 (`TdQuoteBody::Tdx15Ex`), but the

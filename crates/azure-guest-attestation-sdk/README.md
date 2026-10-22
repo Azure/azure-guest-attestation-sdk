@@ -94,6 +94,17 @@ for (index, digest) in &pcrs {
 let (report, claims) = get_cvm_report(&tpm, Some(b"user-data"))?;
 ```
 
+## Local SNP semantic verification
+
+With `verify`, call `verify::verify_snp_report()` with the raw SNP report and
+VCEK PEM chain. It checks supported report structure, signatures, pinned AMD
+roots, and VCEK product/TCB/HWID bindings. Success does not establish workload
+policy approval or non-revocation; `parse::snp_report()` alone is not verification.
+
+See the [SNP verification design](../../doc/snp-verification.md) for supported
+formats, compatibility rules, trust boundaries, and tests, or the
+[design index](../../doc/README.md) for other topics.
+
 ## Testing
 
 The SDK ships with comprehensive tests backed by the

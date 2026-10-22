@@ -21,8 +21,8 @@ mod backend;
 mod backend;
 
 pub(crate) use backend::{
-    cert_from_pem, cert_is_self_signed, ecdsa_p256_verify_point, ecdsa_verify_raw, parse_pem_chain,
-    sha256, verify_cert_chain, Cert,
+    cert_from_pem, cert_is_self_signed, cert_to_der, ecdsa_p256_verify_point, ecdsa_verify_raw,
+    parse_pem_chain, sha256, verify_cert_chain, Cert,
 };
 
 /// Message digest used by [`ecdsa_verify_raw`].

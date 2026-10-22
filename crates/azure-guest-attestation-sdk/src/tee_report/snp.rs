@@ -94,6 +94,28 @@ pub struct SnpReport {
     pub signature: [u8; 512],
 }
 
+impl SnpReport {
+    /// Signed CPUID family, model, and stepping for report versions 3 through 5.
+    /// `None` means this layout does not define those fields, not zero identity.
+    /// This accessor does not validate the report or authenticate its contents.
+    pub fn cpuid(&self) -> Option<[u8; 3]> {
+        matches!(self.version, 3..=5)
+            .then(|| [self._reserved1[0], self._reserved1[1], self._reserved1[2]])
+    }
+
+    /// Launch and current mitigation bit vectors for report version 5.
+    /// Older versions do not provide mitigation-vector claims. No required-bit
+    /// policy is applied and unknown bits are preserved.
+    pub fn mitigation_vectors(&self) -> Option<(u64, u64)> {
+        (self.version == 5).then(|| {
+            (
+                u64::from_le_bytes(self._reserved4[..8].try_into().unwrap()),
+                u64::from_le_bytes(self._reserved4[8..16].try_into().unwrap()),
+            )
+        })
+    }
+}
+
 // Size check (debug only)
 const _: () = {
     assert!(SNP_REPORT_SIZE == core::mem::size_of::<SnpReport>());
@@ -103,6 +125,29 @@ const _: () = {
 mod tests {
     use super::*;
     use core::mem::{align_of, size_of};
+
+    #[test]
+    fn snp_versioned_fields_preserve_wire_layout() {
+        assert_eq!(core::mem::offset_of!(SnpReport, _reserved1), 0x188);
+        assert_eq!(core::mem::offset_of!(SnpReport, _reserved4), 0x1f8);
+        assert_eq!(core::mem::offset_of!(SnpReport, signature), 0x2a0);
+        let milan =
+            crate::parse::snp_report(include_bytes!("../verify/testdata/snp_report_milan.bin"))
+                .unwrap();
+        let mut turin =
+            crate::parse::snp_report(include_bytes!("../verify/testdata/snp_report_turin.bin"))
+                .unwrap();
+        assert_eq!(milan.cpuid(), Some([0x19, 1, 1]));
+        assert_eq!(milan.mitigation_vectors(), None);
+        assert_eq!(turin.cpuid(), Some([0x1a, 2, 1]));
+        assert_eq!(turin.mitigation_vectors(), Some((0x3f, 0x3f)));
+        turin.version = 2;
+        assert_eq!(turin.cpuid(), None);
+        assert_eq!(turin.mitigation_vectors(), None);
+        turin.version = 6;
+        assert_eq!(turin.cpuid(), None);
+        assert_eq!(turin.mitigation_vectors(), None);
+    }
 
     #[test]
     fn snp_report_size_matches_spec() {

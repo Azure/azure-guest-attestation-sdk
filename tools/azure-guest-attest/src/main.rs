@@ -11,7 +11,7 @@ use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[cfg(target_os = "windows")]
 use anyhow::bail;
@@ -43,6 +43,42 @@ struct Cli {
 
     #[command(subcommand)]
     command: Commands,
+}
+
+#[derive(Args, Debug)]
+struct TeeReportArgs {
+    /// Saved raw binary report to inspect offline (omit to fetch from the TPM)
+    #[arg(value_name = "PATH", requires = "report_type")]
+    report: Option<PathBuf>,
+    /// Type of the saved report (not a CVM report wrapper or TD quote)
+    #[arg(long = "type", value_enum, requires = "report")]
+    report_type: Option<SavedReportKind>,
+    /// User data to stage when fetching from the TPM (same format as cvm-report)
+    #[arg(
+        long = "user-data",
+        value_name = "DATA",
+        default_value = "",
+        conflicts_with = "report"
+    )]
+    user_data: String,
+    /// Output the raw report bytes (binary) instead of parsing
+    #[arg(long, conflicts_with_all = ["hex", "base64"])]
+    raw: bool,
+    /// Output the report bytes as a hex string instead of parsing
+    #[arg(long, conflicts_with = "base64")]
+    hex: bool,
+    /// Output the report bytes as a base64 string instead of parsing
+    #[arg(long)]
+    base64: bool,
+    /// Pretty print parsed structure (default unless --raw, --hex, or --base64)
+    #[arg(long, default_value_t = true)]
+    pretty: bool,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum SavedReportKind {
+    Snp,
+    Tdx,
 }
 
 #[derive(Subcommand, Debug)]
@@ -99,18 +135,8 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// Fetch and display only the raw TEE report (or parsed form)
-    TeeReport {
-        /// Provide optional user data (same format as cvm-report) to influence report_data field
-        #[arg(long = "user-data", value_name = "DATA", default_value = "")]
-        user_data: String,
-        /// Output only raw TEE report bytes (hex) without parsing
-        #[arg(long)]
-        raw: bool,
-        /// Pretty print parsed structure (default true unless --raw)
-        #[arg(long, default_value_t = true)]
-        pretty: bool,
-    },
+    /// Fetch a TEE report from the TPM or inspect a saved SNP/TDX report offline
+    TeeReport(TeeReportArgs),
     /// Parse a TD quote from disk or fetch it from the platform
     TdQuote {
         /// Path to the TD quote blob file (omit to fetch from IMDS)
@@ -271,6 +297,55 @@ enum EndorsementAction {
         #[arg(long)]
         json: bool,
     },
+}
+
+fn write_tee_report(
+    args: &TeeReportArgs,
+    bytes: &[u8],
+    report_type: azure_guest_attestation_sdk::report::CvmReportType,
+    writer: &mut dyn Write,
+) -> anyhow::Result<()> {
+    use azure_guest_attestation_sdk::report::CvmReportType;
+    use azure_guest_attestation_sdk::{parse, tee_report};
+
+    if args.raw {
+        writer.write_all(bytes)?;
+    } else if args.base64 {
+        writeln!(
+            writer,
+            "{}",
+            base64::engine::general_purpose::STANDARD.encode(bytes)
+        )?;
+    } else if args.hex || !args.pretty {
+        writeln!(writer, "{}", hex::encode(bytes))?;
+    } else if bytes.is_empty() && args.report.is_none() {
+        writeln!(writer, "TEE report type {report_type:?} has no payload")?;
+    } else {
+        let (name, expected_size) = match report_type {
+            CvmReportType::SnpVmReport => ("SNP", tee_report::snp::SNP_REPORT_SIZE),
+            CvmReportType::TdxVmReport => ("TDX", tee_report::tdx::TDX_REPORT_SIZE),
+            CvmReportType::VbsVmReport => ("VBS", tee_report::vbs::VBS_REPORT_SIZE),
+            CvmReportType::TvmReport | CvmReportType::Invalid => {
+                writeln!(writer, "No TEE report available for type {report_type:?}")?;
+                return Ok(());
+            }
+        };
+        if args.report.is_some() {
+            anyhow::ensure!(
+                bytes.len() == expected_size,
+                "{name} report must be exactly {expected_size} bytes; got {}",
+                bytes.len()
+            );
+        }
+        let display = match report_type {
+            CvmReportType::SnpVmReport => parse::snp_report_pretty(&parse::snp_report(bytes)?),
+            CvmReportType::TdxVmReport => parse::tdx_report_pretty(&parse::tdx_report(bytes)?),
+            CvmReportType::VbsVmReport => parse::vbs_report_pretty(&parse::vbs_report(bytes)?),
+            CvmReportType::TvmReport | CvmReportType::Invalid => unreachable!(),
+        };
+        writeln!(writer, "{display}")?;
+    }
+    Ok(())
 }
 
 fn main() -> anyhow::Result<()> {
@@ -602,74 +677,22 @@ fn main() -> anyhow::Result<()> {
                 writeln!(writer, "{}", serde_json::to_string_pretty(&result)?)?;
             }
         }
-        Commands::TeeReport {
-            user_data,
-            raw,
-            pretty,
-        } => {
-            let ud_vec = parse_user_data_variable(&user_data)?; // may be empty
-            let tpm = match Tpm::open() {
-                Ok(t) => t,
-                Err(e) => return Err(anyhow::anyhow!("Failed to open TPM: {e}")),
-            };
-            let (tee_bytes, rtype) = get_tee_report_and_type(&tpm, Some(&ud_vec))?;
+        Commands::TeeReport(args) => {
             use azure_guest_attestation_sdk::report::CvmReportType;
-            if raw {
-                if tee_bytes.is_empty() {
-                    writeln!(writer, "(no TEE report for type {:?})", rtype)?;
-                } else {
-                    writeln!(writer, "{}", hex::encode(tee_bytes))?;
-                }
-                return Ok(());
-            }
-            if tee_bytes.is_empty() {
-                writeln!(writer, "TEE report type {:?} has no payload", rtype)?;
-                return Ok(());
-            }
-            match rtype {
-                CvmReportType::SnpVmReport => {
-                    if pretty {
-                        if let Ok(rep) = azure_guest_attestation_sdk::parse::snp_report(&tee_bytes)
-                        {
-                            let full = azure_guest_attestation_sdk::parse::snp_report_pretty(&rep);
-                            writeln!(writer, "{full}")?;
-                        } else {
-                            writeln!(writer, "(truncated SNP report: {} bytes)", tee_bytes.len())?;
-                        }
-                    } else {
-                        writeln!(writer, "{}", hex::encode(&tee_bytes))?;
-                    }
-                }
-                CvmReportType::TdxVmReport => {
-                    if pretty {
-                        if let Ok(rep) = azure_guest_attestation_sdk::parse::tdx_report(&tee_bytes)
-                        {
-                            let full = azure_guest_attestation_sdk::parse::tdx_report_pretty(&rep);
-                            writeln!(writer, "{full}")?;
-                        } else {
-                            writeln!(writer, "(truncated TDX report: {} bytes)", tee_bytes.len())?;
-                        }
-                    } else {
-                        writeln!(writer, "{}", hex::encode(&tee_bytes))?;
-                    }
-                }
-                CvmReportType::VbsVmReport => {
-                    if pretty {
-                        if let Ok(rep) = azure_guest_attestation_sdk::parse::vbs_report(&tee_bytes)
-                        {
-                            let full = azure_guest_attestation_sdk::parse::vbs_report_pretty(&rep);
-                            writeln!(writer, "{full}")?;
-                        } else {
-                            writeln!(writer, "(truncated VBS report: {} bytes)", tee_bytes.len())?;
-                        }
-                    } else {
-                        writeln!(writer, "{}", hex::encode(&tee_bytes))?;
-                    }
-                }
-                CvmReportType::TvmReport | CvmReportType::Invalid => {
-                    writeln!(writer, "No TEE report available for type {:?}", rtype)?;
-                }
-            }
+            let (tee_bytes, rtype) = if let Some(path) = &args.report {
+                let report_type = match args.report_type.context("--type is required with PATH")? {
+                    SavedReportKind::Snp => CvmReportType::SnpVmReport,
+                    SavedReportKind::Tdx => CvmReportType::TdxVmReport,
+                };
+                let bytes = std::fs::read(path)
+                    .with_context(|| format!("reading TEE report from {}", path.display()))?;
+                (bytes, report_type)
+            } else {
+                let ud_vec = parse_user_data_variable(&args.user_data)?;
+                let tpm = Tpm::open().context("Failed to open TPM")?;
+                get_tee_report_and_type(&tpm, Some(&ud_vec))?
+            };
+            write_tee_report(&args, &tee_bytes, rtype, &mut writer)?;
         }
         Commands::TdQuote {
             quote,
@@ -1946,6 +1969,102 @@ mod tests {
     use core::mem::size_of;
     use serde_json::json;
     use std::path::PathBuf;
+
+    #[test]
+    fn tee_report_defaults_to_platform() {
+        let cli = Cli::try_parse_from(["tool", "tee-report"]).unwrap();
+        let Commands::TeeReport(args) = cli.command else {
+            panic!("expected tee-report");
+        };
+        assert!(args.report.is_none());
+        assert!(args.report_type.is_none());
+        assert!(args.user_data.is_empty());
+        assert!(args.pretty);
+        assert!(!args.raw);
+        assert!(!args.hex);
+        assert!(!args.base64);
+
+        let cli = Cli::try_parse_from(["tool", "tee-report", "--user-data", "utf8:hello"]).unwrap();
+        let Commands::TeeReport(args) = cli.command else {
+            panic!("expected tee-report");
+        };
+        assert!(args.report.is_none());
+        assert_eq!(parse_user_data_variable(&args.user_data).unwrap(), b"hello");
+    }
+
+    #[test]
+    fn tee_report_platform_output_modes() {
+        use azure_guest_attestation_sdk::report::CvmReportType;
+        use azure_guest_attestation_sdk::{parse, tee_report};
+
+        for (report_type, size) in [
+            (CvmReportType::SnpVmReport, tee_report::snp::SNP_REPORT_SIZE),
+            (CvmReportType::TdxVmReport, tee_report::tdx::TDX_REPORT_SIZE),
+            (CvmReportType::VbsVmReport, tee_report::vbs::VBS_REPORT_SIZE),
+        ] {
+            let bytes = vec![0; size];
+            let pretty = match report_type {
+                CvmReportType::SnpVmReport => {
+                    parse::snp_report_pretty(&parse::snp_report(&bytes).unwrap())
+                }
+                CvmReportType::TdxVmReport => {
+                    parse::tdx_report_pretty(&parse::tdx_report(&bytes).unwrap())
+                }
+                CvmReportType::VbsVmReport => {
+                    parse::vbs_report_pretty(&parse::vbs_report(&bytes).unwrap())
+                }
+                _ => unreachable!(),
+            };
+            for (options, expected) in [
+                (&[][..], format!("{pretty}\n").into_bytes()),
+                (&["--raw"][..], bytes.clone()),
+                (
+                    &["--hex"][..],
+                    format!("{}\n", hex::encode(&bytes)).into_bytes(),
+                ),
+                (
+                    &["--base64"][..],
+                    format!(
+                        "{}\n",
+                        base64::engine::general_purpose::STANDARD.encode(&bytes)
+                    )
+                    .into_bytes(),
+                ),
+            ] {
+                let cli = Cli::try_parse_from(
+                    ["tool", "tee-report"]
+                        .into_iter()
+                        .chain(options.iter().copied()),
+                )
+                .unwrap();
+                let Commands::TeeReport(args) = cli.command else {
+                    panic!("expected tee-report");
+                };
+                let mut output = Vec::new();
+                write_tee_report(&args, &bytes, report_type, &mut output).unwrap();
+                assert_eq!(output, expected, "{report_type:?} {options:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn tee_report_platform_parse_failures_are_errors() {
+        use azure_guest_attestation_sdk::report::CvmReportType;
+
+        let cli = Cli::try_parse_from(["tool", "tee-report"]).unwrap();
+        let Commands::TeeReport(args) = cli.command else {
+            panic!("expected tee-report");
+        };
+        for report_type in [
+            CvmReportType::SnpVmReport,
+            CvmReportType::TdxVmReport,
+            CvmReportType::VbsVmReport,
+        ] {
+            let mut output = Vec::new();
+            assert!(write_tee_report(&args, &[0; 4], report_type, &mut output).is_err());
+            assert!(output.is_empty());
+        }
+    }
 
     #[test]
     fn extract_tcb_composes_snp_tee_attestation_top_level() {
