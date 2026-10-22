@@ -79,6 +79,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Update locked `quinn-proto`, `rustls`, `rustls-webpki`, and `webpki-roots`
+  dependencies to patched releases, resolving RustSec audit failures without
+  suppressing advisories.
+
 - **`verify::verify_td_quote()` rejected TDX 1.5 Service-TD extended quotes.**
   The parser understands `body_type` 4 (`TdQuoteBody::Tdx15Ex`), but the
   verifier's measurement extraction only matched `Tdx10`/`Tdx15` and fell
