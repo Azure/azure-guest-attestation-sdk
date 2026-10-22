@@ -255,11 +255,24 @@ target/release/azure-guest-attest --help
 * `azure-guest-attest ak-pub [--hex]`
    * Fetch Attestation Key public area; `--hex` for hex encoding, otherwise raw bytes.
 
-* `azure-guest-attest tee-report [--user-data <DATA>] [--raw] [--no-pretty]`
-   * Fetch only the TEE attestation report body (without runtime claims parsing).
-   * `--raw` outputs the report bytes (hex) trimmed to its known size for the report type.
-   * Without `--raw`, a minimal parsed summary is printed depending on report type (SNP/TDX/VBS).
-   * Report type is inferred from the embedded runtime claims header field.
+* `azure-guest-attest tee-report [PATH --type <snp|tdx>] [--user-data <DATA>] [--raw | --hex | --base64] [--pretty]`
+   * Without `PATH`, fetch only the TEE attestation report body from the TPM and
+     pretty-print its fields (SNP/TDX/VBS). Report type is inferred from the CVM
+     report header. `--user-data` stages optional user data before retrieval.
+   * With `PATH`, inspect a saved raw binary SNP report (1184 bytes) or TDX
+     `TDREPORT_STRUCT` (1024 bytes) offline. `--type snp|tdx` is required with
+     `PATH` and cannot be used without it. `--user-data` cannot be used with a file.
+   * File inspection requires no TPM access, network access, or elevated
+     privileges. Parsing inspects fields only: no SNP signature or TDX MAC is verified.
+   * File inputs must be raw TEE reports, not CVM report wrappers, hex/Base64
+     text, or TDX quotes. Parsed output requires the exact report size.
+   * `--raw` emits binary bytes with no added newline; `--hex` and `--base64`
+     emit encoded text. These mutually exclusive modes bypass parsing and preserve
+     all input bytes, including on files that are not valid reports.
+   * **Breaking change:** `tee-report --raw` previously emitted hex. Use
+     `tee-report --hex` to retain the old text format, or `--raw --out FILE`
+     to save a binary report.
+   * Use the global `-o/--out <FILE>` option to save any output format.
 
 * `azure-guest-attest td-quote [--base64] [--save <PATH>] [--summary] [--no-signature]`
    * Fetch a TDX quote from IMDS using the platform TEE report and display/save it.
@@ -296,10 +309,21 @@ azure-guest-attest ak-cert --pem
 cargo run -p azure-guest-attest --features with-x509 -- ak-cert --summary --pem
 
 # Raw TEE report only (hex)
-azure-guest-attest tee-report --raw
+azure-guest-attest tee-report --hex
+
+# Save a raw binary TEE report fetched from the TPM
+azure-guest-attest tee-report --raw --out tee-report.bin
 
 # Parsed SNP report (with custom user data staged first)
 azure-guest-attest tee-report --user-data utf8:hello
+
+# Parse saved raw SNP and TDX reports without accessing a TPM
+azure-guest-attest tee-report snp-report.bin --type snp
+azure-guest-attest tee-report tdx-report.bin --type tdx
+
+# Encode a saved SNP report or copy its binary bytes to another file
+azure-guest-attest tee-report snp-report.bin --type snp --base64
+azure-guest-attest tee-report snp-report.bin --type snp --raw --out snp-report-copy.bin
 ```
 
 If an NV index is absent the tool prints a message and exits zero, allowing scripts to branch without treating it as an error.
