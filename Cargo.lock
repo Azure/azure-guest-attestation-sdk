@@ -280,7 +280,7 @@ dependencies = [
 
 [[package]]
 name = "azure-guest-attestation-sdk"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aes-gcm",
  "azure-tpm",
@@ -304,7 +304,7 @@ dependencies = [
 
 [[package]]
 name = "azure-tpm"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bitfield-struct",
  "digest",

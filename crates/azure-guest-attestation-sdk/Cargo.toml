@@ -1,6 +1,6 @@
 [package]
 name = "azure-guest-attestation-sdk"
-version = "0.1.0"
+version = "0.1.1"
 description = "Azure Guest Attestation SDK - TPM 2.0 and TEE attestation for CVM and TrustedLaunch VMs"
 documentation = "https://docs.rs/azure-guest-attestation-sdk"
 readme = "README.md"
@@ -18,7 +18,7 @@ rust-version.workspace = true
 name = "azure_guest_attestation_sdk"
 
 [dependencies]
-azure-tpm = { path = "../azure-tpm", version = "0.1.0" }
+azure-tpm = { path = "../azure-tpm", version = "0.1.1" }
 bitfield-struct = "0.6"
 
 # Workspace dependencies

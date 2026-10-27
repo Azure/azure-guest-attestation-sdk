@@ -1,6 +1,6 @@
 [package]
 name = "azure-tpm"
-version = "0.1.0"
+version = "0.1.1"
 description = "Platform-agnostic TPM 2.0 command interface for Azure guest VMs"
 documentation = "https://docs.rs/azure-tpm"
 readme = "README.md"

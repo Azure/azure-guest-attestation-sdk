@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-27
+
+Maintenance release of `azure-tpm` and `azure-guest-attestation-sdk`.
+CLI/tool versions are unchanged; no CLI binaries are published with this release.
+
 ### Added
 
 - Add compatible `attest_guest_with_user_data` and
