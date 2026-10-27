@@ -79,6 +79,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Update locked `tokio` to 1.53.3 to resolve the
+  RUSTSEC-2026-0386 I/O-safety advisory without suppressing the advisory policy.
 - Update locked `quinn-proto`, `rustls`, `rustls-webpki`, and `webpki-roots`
   dependencies to patched releases, resolving RustSec audit failures without
   suppressing advisories.
