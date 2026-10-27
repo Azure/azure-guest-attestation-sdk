@@ -3,6 +3,32 @@
 # Licensed under the MIT License.
 set -euo pipefail
 
+if [[ "${1:-}" == --cargo-plugin ]]; then
+    printf '{"v":[1]}\n'
+    IFS= read -r request
+    if ! jq -e '
+        .v == 1 and .kind == "get" and
+        (.registry["index-url"] == "https://github.com/rust-lang/crates.io-index" or
+         .registry["index-url"] == "sparse+https://index.crates.io/") and
+        (.operation == "read" or
+         (.operation == "publish" and
+          .name == env.RELEASE_PUBLISH_PACKAGE and
+          .vers == env.RELEASE_PUBLISH_VERSION and
+          .cksum == env.RELEASE_PUBLISH_CHECKSUM and
+          (.cksum | type == "string" and test("^[0-9a-f]{64}$"))))
+    ' <<< "$request" > /dev/null; then
+        echo "upload authorization rejected: package, version, registry, or archive checksum mismatch" >&2
+        exit 1
+    fi
+    # Cargo requests read credentials before packaging. Never reuse them for publishing.
+    jq -cn '
+        if (env.RELEASE_PUBLISH_TOKEN // "") == "" then error("missing release token")
+        else {Ok:{kind:"get",token:env.RELEASE_PUBLISH_TOKEN,
+                  cache:"never",operation_independent:false}} end
+    '
+    exit 0
+fi
+
 if (($# != 3)); then
     echo "usage: publish-crate.sh PACKAGE VERSION ARCHIVE" >&2
     exit 1
@@ -96,7 +122,16 @@ fi
 echo "Publishing $package $version"
 cargo publish --locked --registry crates-io --dry-run -p "$package"
 verify_repackaged_checksum
-cargo publish --locked --registry crates-io -p "$package"
+(
+    export RELEASE_PUBLISH_TOKEN=${CARGO_REGISTRY_TOKEN:?missing crates.io release token}
+    export RELEASE_PUBLISH_PACKAGE=$package RELEASE_PUBLISH_VERSION=$version
+    export RELEASE_PUBLISH_CHECKSUM=$local_checksum
+    unset CARGO_REGISTRY_TOKEN CARGO_REGISTRIES_CRATES_IO_TOKEN
+    provider=$(jq -cn --arg script "$(realpath "${BASH_SOURCE[0]}")" '[$script]')
+    # Cargo supplies the SHA-256 of the actual upload archive to this provider.
+    cargo --config "registry.credential-provider=$provider" \
+        publish --locked --registry crates-io -p "$package"
+)
 verify_repackaged_checksum
 for ((attempt = 1; attempt <= 30; attempt++)); do
     checksum=$(registry_checksum)
