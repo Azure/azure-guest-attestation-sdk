@@ -418,7 +418,7 @@ pub fn build_tee_only_payload_from_evidence(
 ) -> io::Result<(String, crate::report::CvmReportType)> {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     let rtype = evidence.report_type;
-    let runtime_data = Vec::new();
+    let runtime_data = &evidence.runtime_data;
     let (evidence_field, evidence_bytes) = match rtype {
         crate::report::CvmReportType::SnpVmReport => {
             let vcek_chain = match endorsement {
@@ -453,7 +453,7 @@ pub fn build_tee_only_payload_from_evidence(
     };
     let payload = serde_json::json!({
         evidence_field: URL_SAFE_NO_PAD.encode(evidence_bytes),
-        "runtimeData": {"data": URL_SAFE_NO_PAD.encode(&runtime_data), "dataType": "JSON"}
+        "runtimeData": {"data": URL_SAFE_NO_PAD.encode(runtime_data), "dataType": "JSON"}
     });
     Ok((payload.to_string(), rtype))
 }
@@ -469,7 +469,7 @@ pub fn build_tee_only_payload(tpm: &Tpm) -> io::Result<(String, crate::report::C
     let raw = crate::tpm::attestation::get_cvm_report_raw(tpm, None)?;
     let (parsed, _claims) = crate::report::CvmAttestationReport::parse_with_runtime_claims(&raw)?;
     let rtype = parsed.runtime_claims_header.report_type;
-    let runtime_data = Vec::new();
+    let runtime_data = parsed.get_runtime_claims_raw_bytes(&raw)?;
     let (evidence_field, evidence_bytes) = match rtype {
         crate::report::CvmReportType::SnpVmReport => {
             let snp_slice = &parsed.tee_report[..crate::report::SNP_VM_REPORT_SIZE];
@@ -1657,7 +1657,7 @@ mod tests {
             report_type: CvmReportType::TdxVmReport,
             tee_report: vec![0xBB; 64],
             runtime_claims: None,
-            runtime_data: vec![],
+            runtime_data: br#"{"user-data":"challenge"}"#.to_vec(),
             platform_quote: td_quote.clone(),
         };
         let (payload, rtype) = build_tee_only_payload_from_evidence(&evidence, None).unwrap();
@@ -1668,6 +1668,12 @@ mod tests {
         let quote_b64 = v["quote"].as_str().unwrap();
         let decoded = URL_SAFE_NO_PAD.decode(quote_b64).unwrap();
         assert_eq!(decoded, td_quote);
+        assert_eq!(
+            URL_SAFE_NO_PAD
+                .decode(v["runtimeData"]["data"].as_str().unwrap())
+                .unwrap(),
+            evidence.runtime_data
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1691,7 +1697,7 @@ mod tests {
             report_type: CvmReportType::SnpVmReport,
             tee_report: vec![0xAA; crate::report::SNP_VM_REPORT_SIZE],
             runtime_claims: None,
-            runtime_data: vec![],
+            runtime_data: br#"{"user-data":"challenge"}"#.to_vec(),
             platform_quote: vec![],
         };
         let endorsement = Endorsement {
@@ -1711,6 +1717,12 @@ mod tests {
         let vcek_b64 = inner["VcekCertChain"].as_str().unwrap();
         let vcek_decoded = URL_SAFE_NO_PAD.decode(vcek_b64).unwrap();
         assert_eq!(vcek_decoded, b"provided-vcek-chain");
+        assert_eq!(
+            URL_SAFE_NO_PAD
+                .decode(v["runtimeData"]["data"].as_str().unwrap())
+                .unwrap(),
+            evidence.runtime_data
+        );
     }
 
     #[test]

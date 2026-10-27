@@ -47,6 +47,34 @@ let result = client.attest_guest(
 println!("Token: {}", result.token.unwrap_or_default());
 ```
 
+### Caller-supplied User Data
+
+The additive methods leave the existing `attest_guest`, `attest_platform`,
+and `AttestOptions` APIs unchanged:
+
+```rust
+use azure_guest_attestation_sdk::{AttestationClient, Provider};
+
+let client = AttestationClient::new()?;
+let guest = client.attest_guest_with_user_data(
+    Provider::maa("https://sharedeus.eus.attest.azure.net"),
+    None,
+    b"caller-challenge",
+)?;
+let platform = client.attest_platform_with_user_data(
+    Provider::maa("https://sharedeus.eus.attest.azure.net"),
+    b"caller-challenge",
+)?;
+```
+
+User data is at most 64 bytes, zero-padded into the user-data NV index before
+collecting CVM evidence. An empty slice explicitly stages zeroes; the existing
+methods do not stage data. This differs from `AttestOptions::client_payload`,
+which is not hardware-bound. Staging or evidence failures are fatal when user
+data is supplied; guest attestation cannot fall back to TrustedLaunch.
+TEE-only requests include the exact runtime claims bytes accompanying the
+SNP report or TDX quote, without JSON reserialization.
+
 ### Decomposed Evidence Collection
 
 For finer control, collect evidence and build the report in stages:
@@ -175,4 +203,3 @@ RUSTFLAGS="--cfg vtpm_tests" cargo clippy -p azure-guest-attestation-sdk --all-t
 ## License
 
 MIT License - see [LICENSE](../../LICENSE)
-

@@ -303,9 +303,7 @@ impl AttestationClient {
             Vec::new()
         };
 
-        let runtime_data = parsed
-            .get_runtime_claims_raw_bytes(&raw)
-            .unwrap_or_default();
+        let runtime_data = parsed.get_runtime_claims_raw_bytes(&raw)?;
 
         // Optionally fetch platform quote (TDX only for now)
         let platform_quote = if opts.fetch_platform_quote && rtype == CvmReportType::TdxVmReport {
@@ -518,6 +516,31 @@ impl AttestationClient {
         provider: Provider,
         options: Option<&AttestOptions>,
     ) -> crate::error::Result<AttestResult> {
+        self.attest_guest_inner(provider, options, None)
+    }
+
+    /// Attest a guest with 0–64 bytes of caller-supplied, hardware-bound user data.
+    ///
+    /// The data is zero-padded and staged into the user-data NV index before
+    /// collecting CVM evidence. Unlike `client_payload`, it is included through
+    /// the platform runtime claims and report binding. Any staging or CVM
+    /// evidence error is fatal; this method never falls back to TrustedLaunch.
+    /// Existing [`AttestOptions`] and [`Self::attest_guest`] remain unchanged.
+    pub fn attest_guest_with_user_data(
+        &self,
+        provider: Provider,
+        options: Option<&AttestOptions>,
+        user_data: &[u8],
+    ) -> crate::error::Result<AttestResult> {
+        self.attest_guest_inner(provider, options, Some(user_data))
+    }
+
+    fn attest_guest_inner(
+        &self,
+        provider: Provider,
+        options: Option<&AttestOptions>,
+        user_data: Option<&[u8]>,
+    ) -> crate::error::Result<AttestResult> {
         let mut timer = guest_attest::StageTimer::new();
 
         // 1. Resolve PCR selection (explicit > OS default)
@@ -527,9 +550,17 @@ impl AttestationClient {
         // 2. Try to collect CVM (TEE) evidence.
         //    TrustedLaunch VMs don't have a CVM report NV index, so
         //    get_cvm_evidence() will fail — treat that as TrustedLaunch.
-        let cvm_evidence = match self.get_cvm_evidence(None) {
+        let cvm_options = CvmEvidenceOptions {
+            user_data: user_data.map(<[u8]>::to_vec),
+            fetch_platform_quote: false,
+        };
+        let cvm_evidence = match self.get_cvm_evidence(Some(&cvm_options)) {
             Ok(ev) => Some(ev),
             Err(e) => {
+                if user_data.is_some() {
+                    tracing::error!(target: "guest_attest", error = %e, "Cannot attest requested user data without CVM evidence");
+                    return Err(e);
+                }
                 tracing::info!(target: "guest_attest", error = %e, "No CVM evidence available, treating as TrustedLaunch");
                 None
             }
@@ -577,10 +608,32 @@ impl AttestationClient {
     /// VCEK chain, or TD Quote), and submits directly to a MAA platform
     /// endpoint.
     pub fn attest_platform(&self, provider: Provider) -> crate::error::Result<AttestResult> {
+        self.attest_platform_inner(provider, None)
+    }
+
+    /// Attest the platform with 0–64 bytes of caller-supplied user data.
+    ///
+    /// Stages zero-padded data into the user-data NV index and sends the exact
+    /// runtime claims accompanying the SNP report or TDX quote to MAA.
+    /// Staging and evidence errors are fatal. An empty slice explicitly stages
+    /// zeroes; [`Self::attest_platform`] leaves existing user data unchanged.
+    pub fn attest_platform_with_user_data(
+        &self,
+        provider: Provider,
+        user_data: &[u8],
+    ) -> crate::error::Result<AttestResult> {
+        self.attest_platform_inner(provider, Some(user_data))
+    }
+
+    fn attest_platform_inner(
+        &self,
+        provider: Provider,
+        user_data: Option<&[u8]>,
+    ) -> crate::error::Result<AttestResult> {
         // Collect CVM evidence with platform quote support
         let opts = CvmEvidenceOptions {
+            user_data: user_data.map(<[u8]>::to_vec),
             fetch_platform_quote: true,
-            ..Default::default()
         };
         let cvm_evidence = self.get_cvm_evidence(Some(&opts))?;
 
@@ -1148,6 +1201,9 @@ mod tests {
     #[cfg(vtpm_tests)]
     #[test]
     fn get_cvm_evidence_accepts_user_data_exactly_64() {
+        let _guard = attestation::USER_DATA_TEST_LOCK
+            .lock()
+            .expect("user-data test lock");
         use azure_tpm_testkit::reference_tpm;
 
         let tpm = match reference_tpm() {

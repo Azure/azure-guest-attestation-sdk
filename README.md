@@ -310,13 +310,14 @@ Commands:
    * For TDX: fetches a TD quote via IMDS.
    * Output defaults to hex; `--base64` switches to standard base64.
 
-* `azure-guest-attest guest-attest [--provider loopback|maa] [--endpoint <MAA_URL>] [--decode] [--show-request]`
+* `azure-guest-attest guest-attest [--provider loopback|maa] [--endpoint <MAA_URL>] [--user-data <DATA>] [--decode] [--show-request]`
    * Collects TPM + TEE evidence, builds a GuestAttestationParameters JSON payload, base64url encodes it and submits to the selected provider.
    * Providers:
       * `loopback` (default): Returns an echo token embedding the request (testing only).
       * `maa`: Calls Microsoft Azure Attestation endpoint (default endpoint currently set to shared WEU sample: `https://sharedweu.weu.attest.azure.net/attest/AzureGuest?api-version=2020-10-01`).
    * `--decode` attempts to parse the returned token as JWT and pretty-print header & payload JSON.
    * `--show-request` prints the original JSON prior to encoding.
+   * `--user-data` stages up to 64 bytes of hardware-bound caller data before collecting CVM evidence. Accepts `hex:`, `utf8:`, or auto-detected input; oversized input is rejected, not truncated. Unlike `--client-payload`, this data participates in the platform report binding. Staging/evidence failures are fatal rather than falling back to TrustedLaunch. Omit the option to preserve existing behavior; an explicit empty value stages 64 zero bytes.
 
 Examples:
 
@@ -345,7 +346,7 @@ The `tee-attest` subcommand performs platform isolation attestation directly aga
 
 Command:
 
-* `azure-guest-attest tee-attest [--endpoint <MAA_PLATFORM_URL>] [--decode] [--show-request] [--force-snp] [--force-tdx]`
+* `azure-guest-attest tee-attest [--endpoint <MAA_PLATFORM_URL>] [--user-data <DATA>] [--decode] [--show-request] [--force-snp] [--force-tdx]`
    * `--endpoint` MAA platform endpoint. Use the TDX or SNP path depending on the detected or desired report type:
       * TDX: `https://<region>.attest.azure.net/attest/TdxVm?api-version=2023-04-01-preview`
       * SNP: `https://<region>.attest.azure.net/attest/SevSnpVm?api-version=2022-08-01`
@@ -354,6 +355,7 @@ Command:
    * `--decode` Pretty-print JWT header & payload (no signature verification) if the response looks like a JWT.
    * `--show-request` Prints the JSON payload sent to MAA (after IMDS quote / VCEK fetch where applicable).
    * `--force-snp` / `--force-tdx` Override the detected type for testing (does not transform evidence; only affects warnings).
+   * `--user-data` has the same encoding, 64-byte limit, and fatal-error semantics as `guest-attest`. The request carries the exact runtime claims bytes accompanying the report.
 
 Payload Shape (sent to MAA):
 
@@ -361,13 +363,13 @@ Payload Shape (sent to MAA):
 // TDX example
 {
    "quote": "<base64 TD quote>",
-   "runtimeData": { "data": "", "dataType": "JSON" }
+   "runtimeData": { "data": "<base64url raw runtime claims>", "dataType": "JSON" }
 }
 
 // SNP example (SnpReport + VCEK chain wrapped then base64 encoded)
 {
    "report": "<base64 JSON bytes of { SnpReport: b64(report), VcekCertChain: b64(chain) }>",
-   "runtimeData": { "data": "", "dataType": "JSON" }
+   "runtimeData": { "data": "<base64url raw runtime claims>", "dataType": "JSON" }
 }
 ```
 

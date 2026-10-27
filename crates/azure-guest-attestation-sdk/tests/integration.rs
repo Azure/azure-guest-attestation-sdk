@@ -30,6 +30,9 @@ use azure_guest_attestation_sdk::tpm::TpmCommandExt;
 // Helpers
 // ---------------------------------------------------------------------------
 
+// AK provisioning spans multiple commands against a process-global TPM.
+static AK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Open a reference TPM and build an `AttestationClient` from it.
 /// Returns `None` if the reference TPM is not available.
 fn make_client() -> Option<AttestationClient> {
@@ -41,12 +44,35 @@ fn make_client() -> Option<AttestationClient> {
 // Tests
 // ---------------------------------------------------------------------------
 
+#[test]
+fn user_data_attestation_preserves_released_api_and_fails_without_cvm_evidence() {
+    let client =
+        AttestationClient::from_tpm(azure_tpm_testkit::reference_tpm().expect("reference TPM"));
+    let options = AttestOptions {
+        client_payload: None,
+        pcr_selection: Some(vec![0, 7]),
+    };
+    for data in [vec![], vec![0x42], vec![0xAA; 64], vec![0xBB; 65]] {
+        let guest = client.attest_guest_with_user_data(Provider::Loopback, Some(&options), &data);
+        let platform = client.attest_platform_with_user_data(Provider::Loopback, &data);
+        for result in [guest, platform] {
+            let error = result.expect_err("user data must not fall back to TrustedLaunch");
+            if data.len() > 64 {
+                assert!(error.to_string().contains("exceeds 64 bytes"), "{error}");
+            } else {
+                assert!(!error.to_string().contains("exceeds 64 bytes"), "{error}");
+            }
+        }
+    }
+}
+
 /// Full `get_device_evidence` flow: ensure AK → read AK cert/pub →
 /// PCR quote → PCR values → ephemeral key creation + certify.
 ///
 /// This exercises the entire TPM evidence collection pipeline end-to-end.
 #[test]
 fn device_evidence_full_pipeline() {
+    let _guard = AK_TEST_LOCK.lock().expect("AK test lock");
     let client = match make_client() {
         Some(c) => c,
         None => return,
@@ -116,6 +142,7 @@ fn device_evidence_full_pipeline() {
 /// build report → Loopback provider → returns a token.
 #[test]
 fn attest_guest_loopback_trusted_launch() {
+    let _guard = AK_TEST_LOCK.lock().expect("AK test lock");
     let client = match make_client() {
         Some(c) => c,
         None => return,
@@ -246,50 +273,26 @@ fn ecc_signing_key_lifecycle() {
 /// structure using the public `tpm::types` parser.
 #[test]
 fn pcr_quote_parse_roundtrip() {
-    let tpm = match azure_tpm_testkit::reference_tpm() {
-        Ok(t) => t,
-        Err(_) => return,
-    };
-
-    // Ensure AK exists
-    if attestation::ensure_persistent_ak(&tpm).is_err() {
-        return;
-    }
+    let _guard = AK_TEST_LOCK.lock().expect("AK test lock");
+    let tpm = azure_tpm_testkit::reference_tpm().expect("reference TPM");
+    attestation::ensure_persistent_ak(&tpm).expect("persistent AK");
 
     // Read PCRs
-    let pcr_values = match attestation::get_pcr_values(&tpm, &[0, 7]) {
-        Ok(v) => v,
-        Err(_) => return,
-    };
+    let pcr_values = attestation::get_pcr_values(&tpm, &[0, 7]).expect("read PCRs");
     assert_eq!(pcr_values.len(), 2);
     assert_eq!(pcr_values[0].0, 0);
     assert_eq!(pcr_values[1].0, 7);
 
     // Generate quote
-    let (attest, sig) = match attestation::get_pcr_quote(&tpm, &[0, 7]) {
-        Ok(v) => v,
-        Err(_) => return,
-    };
+    let (attest, sig) = attestation::get_pcr_quote(&tpm, &[0, 7]).expect("quote PCRs");
     assert!(!attest.is_empty());
     assert!(!sig.is_empty());
 
-    // Parse the attestation structure.
-    // The reference TPM may produce slightly different TPMS_ATTEST layouts;
-    // verify that the parser doesn't panic and returns Ok or a clean error.
-    match azure_guest_attestation_sdk::tpm::types::parse_quote_attestation(&attest) {
-        Ok(parsed) => {
-            // If it parses successfully, verify structural properties
-            assert!(
-                !parsed.pcr_selections.is_empty() || !parsed.pcr_digests.is_empty(),
-                "Parsed quote should have PCR selections or digests"
-            );
-        }
-        Err(e) => {
-            // Parser may fail on some reference TPM output (e.g. different
-            // digest format); that's OK — we just verify no panic.
-            eprintln!("parse_quote_attestation returned error (non-fatal): {e}");
-        }
-    }
+    let parsed = azure_guest_attestation_sdk::tpm::types::parse_quote_attestation(&attest)
+        .expect("parse quote attestation");
+    assert!(!parsed.pcr_selections.is_empty());
+    assert_eq!(parsed.pcr_digests.len(), 1);
+    assert!(!parsed.pcr_digests[0].is_empty());
 }
 
 /// Verify that `get_ak_cert_trimmed` produces output ≤ `get_ak_cert` length.

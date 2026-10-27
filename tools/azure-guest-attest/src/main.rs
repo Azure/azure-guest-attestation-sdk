@@ -178,6 +178,9 @@ enum Commands {
         /// Optional JSON object of key-value pairs to embed (values base64 encoded) in ClientPayload
         #[arg(long, value_name = "JSON", default_value = "{}")]
         client_payload: String,
+        /// Hardware-bound user data (hex:, utf8:, or auto-detect; at most 64 bytes)
+        #[arg(long, value_parser = validate_attestation_user_data)]
+        user_data: Option<String>,
         /// Decode returned JWT (if it looks like one) and pretty print header/payload JSON
         #[arg(long)]
         decode: bool,
@@ -194,6 +197,9 @@ enum Commands {
     },
     /// Perform TEE-only attestation (no TPM/PCR evidence) against MAA platform endpoint
     TeeAttest {
+        /// Hardware-bound user data (hex:, utf8:, or auto-detect; at most 64 bytes)
+        #[arg(long, value_parser = validate_attestation_user_data)]
+        user_data: Option<String>,
         /// MAA platform endpoint (e.g. `https://<region>.attest.azure.net`).
         /// When omitted, the base endpoint is auto-selected from the VM's
         /// region via IMDS (the correct /attest/… path is appended based on
@@ -1073,11 +1079,16 @@ fn main() -> anyhow::Result<()> {
             provider,
             endpoint,
             client_payload,
+            user_data,
             decode,
             show_request,
             pcr_index,
             json,
         } => {
+            let user_data = user_data
+                .as_deref()
+                .map(parse_user_data_variable)
+                .transpose()?;
             let tpm = Tpm::open().map_err(|e| anyhow::anyhow!("Failed to open TPM: {e}"))?;
             // Build provider enum, capturing the resolved MAA endpoint (if any).
             let mut endpoint_used: Option<String> = None;
@@ -1132,7 +1143,10 @@ fn main() -> anyhow::Result<()> {
                 client_payload: Some(client_payload.clone()),
                 pcr_selection,
             };
-            let result = client.attest_guest(prov, Some(&opts))?;
+            let result = match user_data {
+                Some(data) => client.attest_guest_with_user_data(prov, Some(&opts), &data)?,
+                None => client.attest_guest(prov, Some(&opts))?,
+            };
 
             // Only decrypt the token envelope and parse claims when the output
             // actually needs it (--json result or --decode). Otherwise keep the
@@ -1200,6 +1214,7 @@ fn main() -> anyhow::Result<()> {
             }
         }
         Commands::TeeAttest {
+            user_data,
             endpoint,
             decode,
             force_snp,
@@ -1207,6 +1222,10 @@ fn main() -> anyhow::Result<()> {
             show_request,
             json,
         } => {
+            let user_data = user_data
+                .as_deref()
+                .map(parse_user_data_variable)
+                .transpose()?;
             let tpm = Tpm::open().map_err(|e| anyhow::anyhow!("Failed to open TPM: {e}"))?;
             use azure_guest_attestation_sdk::report::CvmReportType;
             let override_type = if force_snp {
@@ -1238,12 +1257,30 @@ fn main() -> anyhow::Result<()> {
                     }
                 },
             };
-            let (token_or_body, payload) =
+            let (token_or_body, payload) = if let Some(data) = user_data {
+                use azure_guest_attestation_sdk::client::{AttestationClient, CvmEvidenceOptions};
+                let client = AttestationClient::from_tpm(tpm);
+                let evidence = client.get_cvm_evidence(Some(&CvmEvidenceOptions {
+                    user_data: Some(data),
+                    fetch_platform_quote: true,
+                }))?;
+                let (payload, detected_type) =
+                    azure_guest_attestation_sdk::guest_attest::build_tee_only_payload_from_evidence(
+                        &evidence, None,
+                    )?;
+                let token = azure_guest_attestation_sdk::guest_attest::submit_tee_only(
+                    &payload,
+                    &endpoint,
+                    override_type.unwrap_or(detected_type),
+                )?;
+                (token, payload)
+            } else {
                 azure_guest_attestation_sdk::guest_attest::tee_only_attest_platform(
                     &tpm,
                     &endpoint,
                     override_type,
-                )?;
+                )?
+            };
             let claims = jwt_payload_value(&token_or_body);
             // A successful platform attestation yields a JWT we can parse.
             // `submit_tee_only` returns the raw response body when it can't find
@@ -1453,6 +1490,19 @@ fn td_quote_summary(parsed: &ParsedTdQuote<'_>) -> String {
         parsed.signature_data_len,
         parsed.remainder.len()
     )
+}
+
+fn validate_attestation_user_data(s: &str) -> Result<String, String> {
+    let trimmed = s.trim();
+    if !trimmed.starts_with("hex:") {
+        let payload = trimmed.strip_prefix("utf8:").unwrap_or(trimmed);
+        if !is_probable_hex(trimmed) && payload.len() > 64 {
+            return Err("user_data exceeds 64 bytes".into());
+        }
+    }
+    parse_user_data_variable(s)
+        .map(|_| s.to_owned())
+        .map_err(|error| error.to_string())
 }
 
 fn parse_user_data_variable(s: &str) -> anyhow::Result<Vec<u8>> {
@@ -1886,6 +1936,49 @@ fn writer_is_terminal(writer: &dyn Write) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn attestation_user_data_cli_validation() {
+        use super::{Cli, Commands};
+        use clap::Parser;
+        for command in ["guest-attest", "tee-attest"] {
+            for (input, expected) in [
+                ("", vec![]),
+                ("utf8:challenge", b"challenge".to_vec()),
+                ("hex:00ff", vec![0, 255]),
+                ("0011", vec![0, 17]),
+                ("challenge", b"challenge".to_vec()),
+            ] {
+                let cli = Cli::try_parse_from(["tool", command, "--user-data", input]).unwrap();
+                let data = match cli.command {
+                    Commands::GuestAttest { user_data, .. }
+                    | Commands::TeeAttest { user_data, .. } => user_data,
+                    _ => unreachable!(),
+                };
+                assert_eq!(
+                    data.as_deref()
+                        .map(super::parse_user_data_variable)
+                        .transpose()
+                        .unwrap(),
+                    Some(expected)
+                );
+            }
+            for input in [
+                format!("utf8:{}", "a".repeat(65)),
+                format!("hex:{}", "ab".repeat(65)),
+                "z".repeat(65),
+                "hex:abc".to_string(),
+                "hex:zz".to_string(),
+            ] {
+                assert!(Cli::try_parse_from(["tool", command, "--user-data", &input]).is_err());
+            }
+            let input = format!("utf8:{}", "a".repeat(64));
+            assert!(Cli::try_parse_from(["tool", command, "--user-data", &input]).is_ok());
+            let input = format!("hex:{}", "ab".repeat(64));
+            assert!(Cli::try_parse_from(["tool", command, "--user-data", &input]).is_ok());
+            assert!(Cli::try_parse_from(["tool", command]).is_ok());
+        }
+    }
+
     use super::*;
     use azure_guest_attestation_sdk::tee_report::td_quote::{
         parse_td_quote, TdQuoteBodyTdx10, TdQuoteBodyType, TdQuoteHeader, TD_QUOTE_BODY_V1_0_SIZE,

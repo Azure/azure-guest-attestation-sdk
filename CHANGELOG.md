@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add compatible `attest_guest_with_user_data` and
+  `attest_platform_with_user_data` SDK methods and `--user-data` for
+  `guest-attest` and `tee-attest`, preserving existing API signatures and
+  `AttestOptions` fields.
+
+### Fixed
+
+- Parse quote PCR digests as a single TPM2B_DIGEST, preserving the 0.1.x
+  `ParsedQuoteAttest::pcr_digests` field as a zero-or-one-entry list.
+- Include exact report runtime claims in TEE-only attestation requests.
+- Fail attestation when requested user data cannot be staged or CVM evidence
+  cannot be collected, rather than silently continuing without its binding.
+- Update vulnerable HTTP/2, QUIC, TLS, certificate-validation, and trust-root
+  dependencies to patched versions.
+
 ## [0.1.0] - 2026-03-18
 
 Initial release. `azure-tpm` and `azure-guest-attestation-sdk` are publishable
