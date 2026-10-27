@@ -6,6 +6,12 @@ name: Release SDK and TPM
 # Push azure-guest-attestation-sdk-v<VERSION> from release/<MAJOR>.<MINOR>.x,
 # then approve the crates-io deployment. No stored Cargo API token is needed.
 on:
+  pull_request:
+    paths:
+      - '.github/workflows/release-sdk.yml'
+      - 'scripts/publish-crate.sh'
+      - 'scripts/test-publish-crate.sh'
+      - 'scripts/README.md'
   push:
     tags:
       - 'azure-guest-attestation-sdk-v*'
@@ -14,7 +20,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-sdk
+  group: release-sdk-${{ github.event.pull_request.number || 'publish' }}
   cancel-in-progress: false
 
 env:
@@ -22,13 +28,37 @@ env:
   RUSTUP_TOOLCHAIN: 1.99.0
 
 jobs:
+  workflow-checks:
+    name: Validate release tooling
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install checksum-pinned actionlint
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          curl --fail --silent --show-error --location --retry 3 \
+            --connect-timeout 10 --max-time 60 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            --output actionlint.tar.gz
+          echo '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  actionlint.tar.gz' \
+            | sha256sum --check
+          tar -xzf actionlint.tar.gz actionlint
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - run: |
+          actionlint .github/workflows/release-sdk.yml
+          bash -n scripts/publish-crate.sh scripts/test-publish-crate.sh
+          shellcheck scripts/publish-crate.sh scripts/test-publish-crate.sh
+          bash scripts/test-publish-crate.sh
+
   version:
     name: Verify release source
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Verify tag, versions, and maintenance line
@@ -65,15 +95,17 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.99.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@ff7f6a3374ce205788da40198ec918bd5d67aea7 # 1.99.0
         with:
           components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Install Strawberry Perl (Windows)
         if: runner.os == 'Windows'
         run: choco install strawberryperl --no-progress -y
-      - uses: taiki-e/install-action@nextest
+      - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2
+        with:
+          tool: cargo-nextest
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
@@ -81,26 +113,19 @@ jobs:
         run: cargo nextest run -p azure-guest-attestation-sdk
         env:
           RUSTFLAGS: --cfg vtpm_tests
-      - name: Test publishing helper
-        if: runner.os == 'Linux'
-        run: |
-          bash -n scripts/publish-crate.sh scripts/test-publish-crate.sh
-          shellcheck scripts/publish-crate.sh scripts/test-publish-crate.sh
-          bash scripts/test-publish-crate.sh
-
   release-checks:
     name: MSRV, docs, coverage, and dependencies
     needs: version
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.99.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@ff7f6a3374ce205788da40198ec918bd5d67aea7 # 1.99.0
         with:
           components: llvm-tools-preview
       - name: Install MSRV toolchain
         run: rustup toolchain install 1.90 --profile minimal
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2
         with:
           tool: cargo-llvm-cov, cargo-audit, cargo-deny
       - run: cargo +1.90 check --workspace
@@ -119,7 +144,8 @@ jobs:
 
   publish:
     name: Publish to crates.io
-    needs: [version, validate, release-checks]
+    if: github.event_name == 'push'
+    needs: [workflow-checks, version, validate, release-checks]
     runs-on: ubuntu-latest
     environment: crates-io
     permissions:
@@ -128,15 +154,13 @@ jobs:
     env:
       RELEASE_VERSION: ${{ needs.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.99.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@ff7f6a3374ce205788da40198ec918bd5d67aea7 # 1.99.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Package and verify both library crates
         run: |
           set -euo pipefail
-          cargo package --workspace \
-            --exclude azure-guest-attest --exclude azure-guest-attest-web \
-            --exclude azure-tpm-tool --locked
+          cargo package -p azure-tpm -p azure-guest-attestation-sdk --locked
           mkdir -p target/release-artifacts
           for crate in azure-tpm azure-guest-attestation-sdk; do
             cp "target/package/$crate-$RELEASE_VERSION.crate" target/release-artifacts/

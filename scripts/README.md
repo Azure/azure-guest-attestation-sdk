@@ -62,6 +62,8 @@ On Linux/macOS, use `cargo build` directly (see root README).
 The [SDK release workflow](../.github/workflows/release-sdk.yml) publishes
 `azure-tpm` followed by `azure-guest-attestation-sdk`. It is separate from the
 CLI release workflows and does not change or publish CLI versions.
+Pull requests changing the workflow or helper run actionlint, ShellCheck,
+and isolated publishing-helper tests; publication runs only for SDK release tags.
 
 One-time setup:
 
