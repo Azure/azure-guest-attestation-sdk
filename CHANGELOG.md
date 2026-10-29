@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.1] - 2026-10-27
+## [0.1.1] - 2026-10-29
 
 Maintenance release of `azure-tpm` and `azure-guest-attestation-sdk`.
 CLI/tool versions are unchanged; no CLI binaries are published with this release.
@@ -21,6 +21,8 @@ CLI/tool versions are unchanged; no CLI binaries are published with this release
 
 ### Fixed
 
+- Update locked `tokio` to 1.53.3 to resolve the
+  RUSTSEC-2026-0386 I/O-safety advisory without suppressing the advisory policy.
 - Parse quote PCR digests as a single TPM2B_DIGEST, preserving the 0.1.x
   `ParsedQuoteAttest::pcr_digests` field as a zero-or-one-entry list.
 - Include exact report runtime claims in TEE-only attestation requests.

@@ -62,6 +62,8 @@ On Linux/macOS, use `cargo build` directly (see root README).
 The [SDK release workflow](../.github/workflows/release-sdk.yml) publishes
 `azure-tpm` followed by `azure-guest-attestation-sdk`. It is separate from the
 CLI release workflows and does not change or publish CLI versions.
+Pull requests changing the workflow or helper run actionlint, ShellCheck,
+and isolated publishing-helper tests; publication runs only for SDK release tags.
 
 One-time setup:
 
@@ -88,8 +90,12 @@ Verified archives and checksums are retained as Actions artifacts **before**
 requesting a short-lived crates.io token through GitHub OIDC. No long-lived
 Cargo token or `CARGO_REGISTRY_TOKEN` repository secret is required.
 
-[`publish-crate.sh`](./publish-crate.sh) verifies each registry checksum
-after publication. A rerun accepts an already-published version only if its
+[`publish-crate.sh`](./publish-crate.sh) checks Cargo's actual upload checksum
+through a dedicated credential provider before authorizing publication. It rejects
+an unexpected registry, package, version, or archive checksum without uploading.
+Credentials are never cached, so preflight read authorization cannot bypass the
+publish check. The helper also verifies each registry checksum after publication.
+A rerun accepts an already-published version only if its
 archive checksum matches; network, authentication, malformed-index, yanked,
 or mismatched-archive errors fail explicitly.
 
