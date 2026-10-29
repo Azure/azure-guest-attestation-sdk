@@ -57,6 +57,54 @@ Windows-only unified build script that compiles all workspace crates.
 
 On Linux/macOS, use `cargo build` directly (see root README).
 
+## SDK and TPM Releases
+
+The [SDK release workflow](../.github/workflows/release-sdk.yml) publishes
+`azure-tpm` followed by `azure-guest-attestation-sdk`. It is separate from the
+CLI release workflows and does not change or publish CLI versions.
+Pull requests changing the workflow or helper run actionlint, ShellCheck,
+and isolated publishing-helper tests; publication runs only for SDK release tags.
+
+One-time setup:
+
+1. Create a GitHub environment named `crates-io`, require release approval,
+   and restrict deployments to tags matching `azure-guest-attestation-sdk-v*`.
+2. In the crates.io settings for **each** library crate, add a Trusted Publisher:
+   owner `Azure`, repository `azure-guest-attestation-sdk`, workflow filename
+   `release-sdk.yml`, environment `crates-io`.
+
+To release:
+
+1. Prepare matching SDK/TPM versions and the SDK's `azure-tpm` dependency on
+   `release/<MAJOR>.<MINOR>.x`. Commit the manifests, lockfile, and changelog.
+2. Tag that reviewed commit as `azure-guest-attestation-sdk-v<VERSION>` and
+   push the branch and tag to the Azure upstream repository.
+3. Wait for Linux/Windows validation and the MSRV, documentation, coverage,
+   and dependency checks, then approve the `crates-io` deployment.
+4. After publication succeeds, create the GitHub release for the SDK tag.
+   A companion `azure-tpm-v<VERSION>` source tag may point to the same commit.
+
+The workflow uses public Cargo 1.99.0 to package both libraries together
+before either version is published; this does not change the Rust 1.90 MSRV.
+Verified archives and checksums are retained as Actions artifacts **before**
+requesting a short-lived crates.io token through GitHub OIDC. No long-lived
+Cargo token or `CARGO_REGISTRY_TOKEN` repository secret is required.
+
+[`publish-crate.sh`](./publish-crate.sh) checks Cargo's actual upload checksum
+through a dedicated credential provider before authorizing publication. It rejects
+an unexpected registry, package, version, or archive checksum without uploading.
+Credentials are never cached, so preflight read authorization cannot bypass the
+publish check. The helper also verifies each registry checksum after publication.
+A rerun accepts an already-published version only if its
+archive checksum matches; network, authentication, malformed-index, yanked,
+or mismatched-archive errors fail explicitly.
+
+Test the helper without network access or registry credentials:
+
+```bash
+bash scripts/test-publish-crate.sh
+```
+
 ## Build Artifacts
 
 Build artifacts are placed in `target/` directories by Cargo:
