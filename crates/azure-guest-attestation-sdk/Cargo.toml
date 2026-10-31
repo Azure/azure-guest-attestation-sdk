@@ -1,6 +1,6 @@
 [package]
 name = "azure-guest-attestation-sdk"
-version = "0.1.0"
+version = "0.2.0"
 description = "Azure Guest Attestation SDK - TPM 2.0 and TEE attestation for CVM and TrustedLaunch VMs"
 documentation = "https://docs.rs/azure-guest-attestation-sdk"
 readme = "README.md"
@@ -18,20 +18,24 @@ rust-version.workspace = true
 name = "azure_guest_attestation_sdk"
 
 [dependencies]
-azure-tpm = { path = "../azure-tpm", version = "0.1.0", default-features = false }
+azure-tpm = { path = "../azure-tpm", version = "0.2.0", default-features = false }
 bitfield-struct = "0.6"
 
 # Workspace dependencies
 base64.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-rand.workspace = true
-sha2.workspace = true
 hex.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 aes-gcm = { workspace = true, optional = true }
 x509-parser = { version = "0.16", optional = true }
+symcrypt = { workspace = true, optional = true }
+rustls-symcrypt = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
+webpki = { workspace = true, optional = true }
+webpki-roots = { workspace = true, optional = true }
+der = { version = "0.7", optional = true }
 
 # HTTP. TLS backend is feature-selected: `rustls-tls` (default) or `native-tls`.
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json"] }
@@ -51,10 +55,10 @@ rustcrypto = ["dep:aes-gcm", "reqwest/rustls-tls", "azure-tpm/rustcrypto"]
 # Used by the shipped CLI so the binary carries no RustCrypto/ring crates.
 # Build with `--no-default-features --features native`.
 native = ["dep:openssl", "reqwest/native-tls", "azure-tpm/native"]
+symcrypt = ["dep:symcrypt", "dep:rustls-symcrypt", "dep:rustls", "dep:webpki", "dep:webpki-roots", "dep:der", "reqwest/rustls-tls-manual-roots-no-provider", "azure-tpm/symcrypt"]
 # Local (offline) DCAP-style attestation verification (ECDSA + X.509 chain
-# validation). Requires the `native` backend: OpenSSL on Linux, CNG/crypt32 on
-# Windows.
-verify = ["native", "dep:x509-parser"]
+# validation). Select `native` or `symcrypt` explicitly.
+verify = ["dep:x509-parser"]
 
 [lints]
 workspace = true
@@ -62,9 +66,14 @@ workspace = true
 [dev-dependencies]
 num-bigint = "0.4"
 injectorpp = "0.5.0"
+sha2.workspace = true
+rand.workspace = true
+rcgen = { version = "0.13", default-features = false, features = ["pem"] }
+yasna = "0.5"
 
 # Reference-TPM test harness. Gated behind `--cfg vtpm_tests` so the heavy
 # git-sourced `ms-tpm-20-ref` (vendored OpenSSL) never enters the default
 # build/test graph. Enable with: RUSTFLAGS="--cfg vtpm_tests".
 [target.'cfg(vtpm_tests)'.dev-dependencies]
-azure-tpm-testkit = { path = "../azure-tpm-testkit" }
+# The SDK's azure-tpm edge supplies the selected backend through unification.
+azure-tpm-testkit = { path = "../azure-tpm-testkit", default-features = false }

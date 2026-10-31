@@ -1,29 +1,31 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! SHA-1 backend for TPM event-log PCR replay.
+//! Backend-selected hashing and session entropy.
 //!
 //! SHA-1 is required here only because the TPM exposes a legacy SHA-1 PCR
 //! bank whose values must be replayed byte-for-byte during TCG event-log
 //! verification — it is a wire-format requirement, not a security choice.
 //!
-//! Two interchangeable backends are provided:
-//!
 //! - **default (`rustcrypto`)**: the pure-Rust `sha1` crate. Portable, no C
 //!   toolchain, published to crates.io.
 //! - **`native`**: platform crypto — OpenSSL on Linux, CNG/BCrypt on Windows —
 //!   so the shipped binary carries no RustCrypto SHA-1 implementation.
+//! - **`symcrypt`**: explicitly linked SymCrypt for all hashes and entropy.
 //!
-//! When both features are enabled, `native` takes precedence. Enabling
-//! neither is a compile error.
+//! `native` retains precedence over `rustcrypto`. SymCrypt is mutually exclusive
+//! with either backend. At least one backend must be selected.
 
-#[cfg(all(not(feature = "native"), not(feature = "rustcrypto")))]
+#[cfg(all(feature = "symcrypt", any(feature = "native", feature = "rustcrypto")))]
 compile_error!(
-    "azure-tpm requires exactly one crypto backend: enable `rustcrypto` (default) or `native`"
+    "`symcrypt` cannot be combined with `native` or `rustcrypto`; disable default features"
 );
 
+#[cfg(not(any(feature = "native", feature = "rustcrypto", feature = "symcrypt")))]
+compile_error!("azure-tpm requires `rustcrypto` (default), `native`, or `symcrypt`");
+
 /// Compute the SHA-1 digest of `parts` concatenated in order (20 bytes).
-#[cfg(not(feature = "native"))]
+#[cfg(all(not(feature = "native"), feature = "rustcrypto"))]
 pub(crate) fn sha1_concat(parts: &[&[u8]]) -> Vec<u8> {
     use sha1::{Digest, Sha1};
     let mut hasher = Sha1::new();
@@ -31,6 +33,58 @@ pub(crate) fn sha1_concat(parts: &[&[u8]]) -> Vec<u8> {
         hasher.update(part);
     }
     hasher.finalize().to_vec()
+}
+
+#[cfg(feature = "symcrypt")]
+pub(crate) fn sha1_concat(parts: &[&[u8]]) -> Vec<u8> {
+    symcrypt::hash::sha1(&parts.concat()).to_vec()
+}
+
+pub(crate) fn sha256_concat(parts: &[&[u8]]) -> Vec<u8> {
+    #[cfg(feature = "symcrypt")]
+    {
+        symcrypt::hash::sha256(&parts.concat()).to_vec()
+    }
+    #[cfg(not(feature = "symcrypt"))]
+    {
+        use sha2::{Digest, Sha256};
+        let mut hash = Sha256::new();
+        for part in parts {
+            hash.update(part);
+        }
+        hash.finalize().to_vec()
+    }
+}
+
+pub(crate) fn sha384_concat(parts: &[&[u8]]) -> Vec<u8> {
+    #[cfg(feature = "symcrypt")]
+    {
+        symcrypt::hash::sha384(&parts.concat()).to_vec()
+    }
+    #[cfg(not(feature = "symcrypt"))]
+    {
+        use sha2::{Digest, Sha384};
+        let mut hash = Sha384::new();
+        for part in parts {
+            hash.update(part);
+        }
+        hash.finalize().to_vec()
+    }
+}
+
+pub(crate) fn random_bytes(bytes: &mut [u8]) -> std::io::Result<()> {
+    #[cfg(feature = "symcrypt")]
+    {
+        symcrypt::symcrypt_random(bytes);
+        Ok(())
+    }
+    #[cfg(not(feature = "symcrypt"))]
+    {
+        use rand::TryRngCore;
+        rand::rngs::OsRng
+            .try_fill_bytes(bytes)
+            .map_err(std::io::Error::other)
+    }
 }
 
 /// Compute the SHA-1 digest of `parts` concatenated in order (20 bytes).
@@ -94,6 +148,21 @@ mod windows_cng {
 #[cfg(test)]
 mod tests {
     use super::sha1_concat;
+
+    #[test]
+    fn sha2_known_answers_and_parts() {
+        assert_eq!(
+            hex::encode(super::sha256_concat(&[b"a", b"bc"])),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert_eq!(
+            hex::encode(super::sha384_concat(&[b"a", b"bc"])),
+            concat!(
+                "cb00753f45a35e8bb5a03d699ac65007272c32ab0eded163",
+                "1a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7"
+            )
+        );
+    }
 
     #[test]
     fn sha1_empty_matches_known_vector() {

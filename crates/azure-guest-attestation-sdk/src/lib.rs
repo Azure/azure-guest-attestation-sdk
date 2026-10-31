@@ -59,7 +59,7 @@ pub mod report;
 /// TEE report parsing for SNP, TDX, and VBS attestation reports.
 pub mod tee_report;
 pub mod tpm;
-/// Local (offline) attestation verification (feature `verify`, requires `native`).
+/// Local attestation verification (`verify` plus explicit `native` or `symcrypt`).
 #[cfg(feature = "verify")]
 pub mod verify;
 

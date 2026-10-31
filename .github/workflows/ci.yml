@@ -110,10 +110,178 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - run: cargo clippy -p azure-guest-attestation-sdk --no-default-features --features verify --all-targets -- -D warnings
+      - run: cargo clippy -p azure-guest-attestation-sdk --no-default-features --features native,verify --all-targets -- -D warnings
       - run: cargo clippy -p azure-guest-local-verify --all-targets -- -D warnings
-      - run: cargo test -p azure-guest-attestation-sdk --no-default-features --features verify
+      - run: cargo test -p azure-guest-attestation-sdk --no-default-features --features native,verify
       - run: cargo build -p azure-guest-local-verify
+
+  # --------------------------------------------------------------------------
+  # Explicit SymCrypt provider, without platform-crypto or RustCrypto fallback.
+  # Native distributions are pinned independently of the Rust wrapper crates.
+  # --------------------------------------------------------------------------
+  symcrypt:
+    name: SymCrypt (${{ matrix.os }})
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.code == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: symcrypt
+      - name: Provision SymCrypt 103.13.0 (Linux x64)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          native="$RUNNER_TEMP/symcrypt"
+          mkdir -p "$native"
+          curl --fail --location --retry 3 \
+            https://github.com/microsoft/SymCrypt/releases/download/v103.13.0/symcrypt-linux-generic-amd64-release-103.13.0-286762b.tar.gz \
+            -o "$native/symcrypt.tar.gz"
+          echo "c3aa92e01a3c15e33b54ca3d5e49b62076a72d4e84b3b80e2f8f4d6877427269  $native/symcrypt.tar.gz" | sha256sum --check
+          tar -xzf "$native/symcrypt.tar.gz" -C "$native"
+          echo "LIBRARY_PATH=$native/lib" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$native/lib" >> "$GITHUB_ENV"
+      - name: Provision SymCrypt 103.13.0 (Windows x64)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $native = Join-Path $env:RUNNER_TEMP symcrypt
+          New-Item -ItemType Directory -Force $native | Out-Null
+          $archive = Join-Path $native symcrypt.zip
+          Invoke-WebRequest `
+            https://github.com/microsoft/SymCrypt/releases/download/v103.13.0/symcrypt-windows-amd64-release-103.13.0-286762b7.zip `
+            -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne
+              '90ea7631331d23a43e0abc7f7af89b44bda67cfa183a70a8b76d988d9d3036b8') {
+            throw 'SymCrypt archive checksum mismatch'
+          }
+          Expand-Archive $archive -DestinationPath $native
+          $dll = Get-ChildItem $native -Recurse -Filter symcrypt.dll
+          if (@($dll).Count -ne 1) { throw 'Expected exactly one SymCrypt DLL' }
+          "SYMCRYPT_LIB_PATH=$($dll.DirectoryName)" >> $env:GITHUB_ENV
+          $dll.DirectoryName >> $env:GITHUB_PATH
+      - run: cargo check -p azure-guest-attestation-sdk --no-default-features --features symcrypt
+      - run: cargo clippy --workspace --no-default-features --features symcrypt --all-targets -- -D warnings
+      - run: cargo test --workspace --no-default-features --features symcrypt
+      - run: cargo build --workspace --no-default-features --features symcrypt
+      - run: cargo run -p azure-guest-local-verify --no-default-features --features symcrypt -- tdx crates/azure-guest-attestation-sdk/src/verify/testdata/tdx_v5_servicetd_quote.bin --json
+      - name: Install reference-TPM prerequisites (Windows)
+        if: runner.os == 'Windows'
+        run: choco install strawberryperl --no-progress -y
+      - uses: taiki-e/install-action@37f7c5781271959fb65b6b35224e28652ff2b63d # v2.87.0
+        with:
+          tool: cargo-nextest@0.9.150
+      - name: SymCrypt reference-TPM integration
+        run: cargo nextest run -p azure-guest-attestation-sdk --no-default-features --features symcrypt,verify
+        env:
+          RUSTFLAGS: --cfg vtpm_tests
+      - name: Reject mixed providers and verify without an offline backend
+        shell: pwsh
+        run: |
+          foreach ($features in @('symcrypt,native', 'symcrypt,rustcrypto', 'rustcrypto,verify', 'verify')) {
+            $output = & cargo check -p azure-guest-attestation-sdk --no-default-features --features $features 2>&1
+            if ($LASTEXITCODE -eq 0) { throw "Unexpectedly accepted features: $features" }
+            if (($output -join "`n") -notmatch 'cannot be combined|requires.*backend|requires.*rustcrypto') {
+              throw "Unexpected failure for ${features}: $output"
+            }
+          }
+          $global:LASTEXITCODE = 0
+      - name: Audit production dependency graph
+        shell: pwsh
+        run: |
+          $graph = & cargo tree --workspace --no-default-features --features symcrypt --edges normal,build --prefix none --format '{p}'
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect production dependencies' }
+          $forbidden = '^(aes-gcm|sha1|sha2|ring|aws-lc-rs|aws-lc-sys|openssl|openssl-sys|native-tls|schannel|cng) v'
+          $found = $graph | Select-String $forbidden
+          if ($found) { throw "Unexpected cryptographic provider: $found" }
+      - name: Audit native imports (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for binary in target/debug/azure-guest-attest target/debug/azure-guest-attest-web \
+              target/debug/azure-guest-local-verify target/debug/azure-tpm-tool \
+              "$LD_LIBRARY_PATH/libsymcrypt.so"; do
+            imports=$(readelf -d "$binary")
+            echo "$imports"
+            if echo "$imports" | grep -E 'NEEDED.*\[(libssl|libcrypto)\.'; then
+              echo "Unexpected OpenSSL import: $binary" >&2
+              exit 1
+            fi
+          done
+      - name: Audit native imports (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $dumpbin = & $vswhere -latest -products '*' -find 'VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe' | Select-Object -First 1
+          if (!$dumpbin) { throw 'Cannot locate dumpbin for native import audit' }
+          foreach ($binary in @('target/debug/azure-guest-attest.exe', 'target/debug/azure-guest-attest-web.exe',
+              'target/debug/azure-guest-local-verify.exe', 'target/debug/azure-tpm-tool.exe', "$env:SYMCRYPT_LIB_PATH/symcrypt.dll")) {
+            $imports = & $dumpbin /imports $binary
+            if ($LASTEXITCODE -ne 0) { throw "Cannot inspect $binary" }
+            $imports
+            $cryptoCalls = $imports | Select-String '\b(BCrypt\w*|NCrypt\w*|Crypt[A-Z]\w*|Cert[A-Z]\w*|AcquireCredentialsHandle\w*|InitializeSecurityContext\w*|AcceptSecurityContext\w*)'
+            $forbidden = $cryptoCalls | Where-Object { $_ -notmatch 'BCryptGenRandom|\.dll\s*$' }
+            if ($forbidden) { throw "Unexpected platform crypto fallback: $forbidden" }
+          }
+      - name: Missing native runtime fails closed (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set +e
+          env -u LD_LIBRARY_PATH target/debug/azure-guest-attest --version > "$RUNNER_TEMP/missing-symcrypt.log" 2>&1
+          status=$?
+          set -e
+          cat "$RUNNER_TEMP/missing-symcrypt.log"
+          test "$status" -eq 127
+          grep -q 'libsymcrypt' "$RUNNER_TEMP/missing-symcrypt.log"
+      - name: Missing native runtime fails closed (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Add-Type @'
+          using System.Runtime.InteropServices;
+          public static class SymCryptLoaderProbe {
+            [DllImport("kernel32.dll")]
+            public static extern uint SetErrorMode(uint mode);
+          }
+          '@
+          $isolated = Join-Path $env:RUNNER_TEMP missing-symcrypt
+          New-Item -ItemType Directory -Force $isolated | Out-Null
+          Copy-Item target/debug/azure-guest-attest.exe "$isolated/probe.exe"
+          $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -ne $env:SYMCRYPT_LIB_PATH }) -join ';'
+          $oldMode = [SymCryptLoaderProbe]::SetErrorMode(0x8003)
+          try {
+            $start = [System.Diagnostics.ProcessStartInfo]::new("$isolated/probe.exe", '--version')
+            $start.UseShellExecute = $false
+            $start.WorkingDirectory = $isolated
+            $process = [System.Diagnostics.Process]::Start($start)
+            if (!$process.WaitForExit(10000)) {
+              $process.Kill()
+              throw 'Missing-DLL probe did not terminate'
+            }
+            if ($process.ExitCode -ne -1073741515) {
+              throw "Expected STATUS_DLL_NOT_FOUND, got $($process.ExitCode)"
+            }
+          } finally {
+            [SymCryptLoaderProbe]::SetErrorMode($oldMode) | Out-Null
+            Remove-Item "$isolated/probe.exe"
+          }
+      - name: SymCrypt MSRV (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          rustup toolchain install 1.90 --profile minimal
+          cargo +1.90 check --workspace --no-default-features --features symcrypt
 
   # --------------------------------------------------------------------------
   # vTPM integration tests (skipped on doc-only changes)
@@ -139,7 +307,9 @@ jobs:
         run: choco install strawberryperl --no-progress -y
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@nextest
+        uses: taiki-e/install-action@37f7c5781271959fb65b6b35224e28652ff2b63d # v2.87.0
+        with:
+          tool: cargo-nextest@0.9.150
 
       - name: Run vTPM tests (nextest)
         run: cargo nextest run -p azure-guest-attestation-sdk

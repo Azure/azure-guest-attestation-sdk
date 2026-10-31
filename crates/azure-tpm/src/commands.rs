@@ -740,11 +740,8 @@ impl<T: RawTpm> TpmCommandExt for T {
     }
 
     fn start_auth_session(&self, session_type: u8, auth_hash_alg: u16) -> io::Result<u32> {
-        use rand::TryRngCore;
         let mut nonce = vec![0u8; 16];
-        rand::rngs::OsRng
-            .try_fill_bytes(&mut nonce)
-            .map_err(io::Error::other)?;
+        crate::crypto::random_bytes(&mut nonce)?;
         let parameters = StartAuthSessionCommandParameters {
             nonce_caller: Tpm2bBytes(nonce),
             encrypted_salt: Tpm2bBytes(Vec::new()),
@@ -782,13 +779,9 @@ impl<T: RawTpm> TpmCommandExt for T {
         if pcrs.is_empty() {
             return Ok(());
         }
-        use sha2::{Digest, Sha256};
         let values = self.read_pcrs_sha256(pcrs)?;
-        let mut hasher = Sha256::new();
-        for (_, v) in &values {
-            hasher.update(v);
-        }
-        let digest = hasher.finalize().to_vec();
+        let parts: Vec<&[u8]> = values.iter().map(|(_, v)| v.as_slice()).collect();
+        let digest = crate::crypto::sha256_concat(&parts);
         let parameters = PolicyPcrCommandParameters {
             pcr_digest: Tpm2bBytes(digest),
             pcr_selection: PcrSelectionList::from_pcrs(pcrs),

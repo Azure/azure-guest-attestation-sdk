@@ -9,6 +9,10 @@ Azure Attestation SDK for Confidential VMs (Intel TDX, AMD SEV-SNP) and TrustedL
 The [design documentation index](doc/README.md) links architecture and
 topic-specific design notes. Crate and tool READMEs focus on setup and usage.
 
+See [SymCrypt backend configuration](doc/symcrypt.md) for the optional
+Linux/Windows SymCrypt backend, native library prerequisites, and explicit
+backend selection for offline verification.
+
 ## Repository Structure
 
 ```
@@ -32,7 +36,8 @@ topic-specific design notes. Crate and tool READMEs focus on setup and usage.
 - Rust toolchain (install via [rustup](https://www.rust-lang.org/tools/install))
 - On Windows: Visual Studio Build Tools (MSVC) with "Desktop development with C++" workload
 - On Linux: `build-essential` (or equivalent: `gcc`, `make`, `perl`)
-- [cargo-nextest](https://nexte.st/) (recommended test runner): `cargo install cargo-nextest`
+- [cargo-nextest](https://nexte.st/) **0.9.150 or newer** (recommended test runner):
+  `cargo install --locked --force --version 0.9.150 cargo-nextest`
 
 ### Setup
 
@@ -78,9 +83,14 @@ never depend on it.
 each test its own vTPM instance. Tests run fully in parallel with no thread-safety
 concerns.
 
+The repository requires nextest **0.9.150 or newer**, and CI pins 0.9.150.
+Older Windows runners can incorrectly mark passing tests as leaky under
+parallel execution. Upgrade the runner rather than disabling leak detection,
+increasing its timeout, or serializing the tests.
+
 ```bash
-# Install once
-cargo install cargo-nextest
+# Install or upgrade
+cargo install --locked --force --version 0.9.150 cargo-nextest
 
 # Run all SDK tests (uses workspace alias)
 RUSTFLAGS="--cfg vtpm_tests" cargo nt
@@ -138,7 +148,7 @@ Platform-agnostic TPM 2.0 command interface. Provides device access, high-level 
 
 ```toml
 [dependencies]
-azure-tpm = "0.1"
+azure-tpm = "0.2"
 ```
 
 ### [azure-guest-attestation-sdk](crates/azure-guest-attestation-sdk/)
@@ -147,7 +157,7 @@ Core attestation library - publishable to [crates.io](https://crates.io/crates/a
 
 ```toml
 [dependencies]
-azure-guest-attestation-sdk = "0.1"
+azure-guest-attestation-sdk = "0.2"
 ```
 
 Features:

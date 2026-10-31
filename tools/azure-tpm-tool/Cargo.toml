@@ -11,8 +11,14 @@ authors.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-azure-tpm.workspace = true
+azure-tpm = { path = "../../crates/azure-tpm", default-features = false }
 
 clap.workspace = true
 hex.workspace = true
 anyhow.workspace = true
+
+[features]
+default = ["rustcrypto"]
+rustcrypto = ["azure-tpm/rustcrypto"]
+native = ["azure-tpm/native"]
+symcrypt = ["azure-tpm/symcrypt"]

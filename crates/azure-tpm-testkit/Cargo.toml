@@ -13,9 +13,15 @@ rust-version = "1.90"
 name = "azure_tpm_testkit"
 
 [dependencies]
-azure-tpm = { path = "../azure-tpm" }
+azure-tpm = { path = "../azure-tpm", default-features = false }
 ms-tpm-20-ref = { git = "https://github.com/microsoft/ms-tpm-20-ref-rs", features = ["vendored"] }
 getrandom = { version = "0.2" }
+
+[features]
+default = ["rustcrypto"]
+rustcrypto = ["azure-tpm/rustcrypto"]
+native = ["azure-tpm/native"]
+symcrypt = ["azure-tpm/symcrypt"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(vtpm_tests)'] }
