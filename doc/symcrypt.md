@@ -77,14 +77,27 @@ Use the directory containing **both** `symcrypt.lib` and `symcrypt.dll`:
 ```powershell
 $env:SYMCRYPT_LIB_PATH = 'C:\trusted\symcrypt\dll'
 $env:PATH = "$env:SYMCRYPT_LIB_PATH;$env:PATH"
+foreach ($directory in @('target/debug', 'target/debug/deps')) {
+    New-Item -ItemType Directory -Force $directory | Out-Null
+    Copy-Item "$env:SYMCRYPT_LIB_PATH/symcrypt.dll" "$directory/symcrypt.dll" -Force
+}
 cargo build --workspace --no-default-features --features symcrypt
 cargo test --workspace --no-default-features --features symcrypt
 ```
 
-Deploy `symcrypt.dll` next to the executable, or install it in a trusted loader
-search directory, together with the distribution's license notices and required
-runtime components. Static CRT flags for the Rust executable do **not** make
-the SymCrypt DLL static or remove its own runtime dependencies.
+The example uses the default debug output directories. For release or custom
+target directories, copy the DLL to the corresponding executable/test
+directories. Deploy the verified `symcrypt.dll` next to each executable,
+together with the distribution's license notices and required runtime
+components. Recent Windows versions also provide a System32 SymCrypt DLL:
+putting the downloaded DLL on PATH alone does not pin the runtime version,
+because the system directory is searched before PATH. `SYMCRYPT_LIB_PATH`
+configures linking, not runtime selection.
+
+CI covers Windows-latest and Windows 2022 with app-local DLLs. Both reject an
+invalid app-local DLL rather than falling through to a system copy; Windows 2022
+also tests genuine DLL absence. Static CRT flags for the Rust executable do
+**not** make the SymCrypt DLL static or remove its own runtime dependencies.
 
 Missing or incompatible native libraries cause link/load failure; there is no
 automatic cryptographic fallback.

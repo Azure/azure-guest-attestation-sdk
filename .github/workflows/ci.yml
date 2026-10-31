@@ -127,7 +127,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, windows-2022]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@stable
@@ -169,6 +169,10 @@ jobs:
           if (@($dll).Count -ne 1) { throw 'Expected exactly one SymCrypt DLL' }
           "SYMCRYPT_LIB_PATH=$($dll.DirectoryName)" >> $env:GITHUB_ENV
           $dll.DirectoryName >> $env:GITHUB_PATH
+          foreach ($directory in @('target/debug', 'target/debug/deps')) {
+            New-Item -ItemType Directory -Force $directory | Out-Null
+            Copy-Item $dll.FullName "$directory/symcrypt.dll" -Force
+          }
       - run: cargo check -p azure-guest-attestation-sdk --no-default-features --features symcrypt
       - run: cargo clippy --workspace --no-default-features --features symcrypt --all-targets -- -D warnings
       - run: cargo test --workspace --no-default-features --features symcrypt
@@ -245,7 +249,7 @@ jobs:
           cat "$RUNNER_TEMP/missing-symcrypt.log"
           test "$status" -eq 127
           grep -q 'libsymcrypt' "$RUNNER_TEMP/missing-symcrypt.log"
-      - name: Missing native runtime fails closed (Windows)
+      - name: App-local native runtime fails closed (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -260,36 +264,44 @@ jobs:
           New-Item -ItemType Directory -Force $isolated | Out-Null
           Copy-Item target/debug/azure-guest-attest.exe "$isolated/probe.exe"
           $nativeDll = Join-Path $env:SYMCRYPT_LIB_PATH symcrypt.dll
-          $hiddenDll = Join-Path $env:SYMCRYPT_LIB_PATH symcrypt.dll.disabled
+          $appDll = Join-Path $isolated symcrypt.dll
+          Copy-Item -LiteralPath $nativeDll -Destination $appDll
+          $cases = @('valid', 'invalid')
+          # Windows-latest ships SymCrypt; genuine absence is tested on 2022.
+          if ('${{ matrix.os }}' -eq 'windows-2022') { $cases += 'missing' }
           $oldMode = [SymCryptLoaderProbe]::SetErrorMode(0x8003)
           try {
-            foreach ($missing in @($false, $true)) {
-              if ($missing) { Move-Item -LiteralPath $nativeDll -Destination $hiddenDll }
+            foreach ($case in $cases) {
+              if ($case -eq 'invalid') { [System.IO.File]::WriteAllBytes($appDll, [byte[]]@(0)) }
+              if ($case -eq 'missing') { Remove-Item -LiteralPath $appDll }
               $start = [System.Diagnostics.ProcessStartInfo]::new("$isolated/probe.exe", '--version')
               $start.UseShellExecute = $false
               $start.WorkingDirectory = $isolated
-              $start.Environment['PATH'] = "$env:SYMCRYPT_LIB_PATH;$env:SystemRoot\System32;$env:SystemRoot"
+              $start.Environment['PATH'] = "$env:SystemRoot\System32;$env:SystemRoot"
               $process = [System.Diagnostics.Process]::Start($start)
               try {
                 if (!$process.WaitForExit(10000)) {
                   $process.Kill()
                   throw 'Native runtime probe did not terminate'
                 }
-                $expected = if ($missing) { -1073741515 } else { 0 }
-                if ($process.ExitCode -ne $expected) {
+                $expected = switch ($case) {
+                  'valid' { 0 }
+                  'invalid' { -1073741701; -1073741521 }
+                  'missing' { -1073741515 }
+                }
+                if ($process.ExitCode -notin $expected) {
                   $ambient = @("$env:SystemRoot\System32\symcrypt.dll", "$env:SystemRoot\symcrypt.dll") |
                     Where-Object { Test-Path -LiteralPath $_ }
-                  throw "Expected loader status $expected, got $($process.ExitCode); ambient DLLs: $ambient"
+                  throw "Expected $case loader status $expected, got $($process.ExitCode); ambient DLLs: $ambient"
                 }
+                "SymCrypt $case loader status: $($process.ExitCode)"
               } finally {
                 $process.Dispose()
               }
             }
           } finally {
-            if (Test-Path -LiteralPath $hiddenDll) {
-              Move-Item -LiteralPath $hiddenDll -Destination $nativeDll
-            }
             [SymCryptLoaderProbe]::SetErrorMode($oldMode) | Out-Null
+            if (Test-Path -LiteralPath $appDll) { Remove-Item -LiteralPath $appDll }
             Remove-Item "$isolated/probe.exe"
           }
       - name: SymCrypt MSRV (Linux)
