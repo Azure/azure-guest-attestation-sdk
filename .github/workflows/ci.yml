@@ -267,13 +267,10 @@ jobs:
           $appDll = Join-Path $isolated symcrypt.dll
           Copy-Item -LiteralPath $nativeDll -Destination $appDll
           $cases = @('valid', 'invalid')
-          # Windows-latest ships SymCrypt; genuine absence is tested on 2022.
-          if ('${{ matrix.os }}' -eq 'windows-2022') { $cases += 'missing' }
           $oldMode = [SymCryptLoaderProbe]::SetErrorMode(0x8003)
           try {
             foreach ($case in $cases) {
               if ($case -eq 'invalid') { [System.IO.File]::WriteAllBytes($appDll, [byte[]]@(0)) }
-              if ($case -eq 'missing') { Remove-Item -LiteralPath $appDll }
               $start = [System.Diagnostics.ProcessStartInfo]::new("$isolated/probe.exe", '--version')
               $start.UseShellExecute = $false
               $start.WorkingDirectory = $isolated
@@ -287,7 +284,6 @@ jobs:
                 $expected = switch ($case) {
                   'valid' { 0 }
                   'invalid' { -1073741701; -1073741521 }
-                  'missing' { -1073741515 }
                 }
                 if ($process.ExitCode -notin $expected) {
                   $ambient = @("$env:SystemRoot\System32\symcrypt.dll", "$env:SystemRoot\symcrypt.dll") |

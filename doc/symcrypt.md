@@ -95,9 +95,11 @@ because the system directory is searched before PATH. `SYMCRYPT_LIB_PATH`
 configures linking, not runtime selection.
 
 CI covers Windows-latest and Windows 2022 with app-local DLLs. Both reject an
-invalid app-local DLL rather than falling through to a system copy; Windows 2022
-also tests genuine DLL absence. Static CRT flags for the Rust executable do
-**not** make the SymCrypt DLL static or remove its own runtime dependencies.
+invalid app-local DLL rather than falling through to a system copy. Both hosted
+images provide a System32 DLL, so genuine absence is validated separately on a
+Windows host without that OS runtime: the same SDK executable fails with
+`STATUS_DLL_NOT_FOUND`. Static CRT flags for the Rust executable do **not** make
+the SymCrypt DLL static or remove its own runtime dependencies.
 
 Missing or incompatible native libraries cause link/load failure; there is no
 automatic cryptographic fallback.
