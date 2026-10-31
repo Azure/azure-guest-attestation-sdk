@@ -259,21 +259,36 @@ jobs:
           $isolated = Join-Path $env:RUNNER_TEMP missing-symcrypt
           New-Item -ItemType Directory -Force $isolated | Out-Null
           Copy-Item target/debug/azure-guest-attest.exe "$isolated/probe.exe"
-          $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -ne $env:SYMCRYPT_LIB_PATH }) -join ';'
+          $nativeDll = Join-Path $env:SYMCRYPT_LIB_PATH symcrypt.dll
+          $hiddenDll = Join-Path $env:SYMCRYPT_LIB_PATH symcrypt.dll.disabled
           $oldMode = [SymCryptLoaderProbe]::SetErrorMode(0x8003)
           try {
-            $start = [System.Diagnostics.ProcessStartInfo]::new("$isolated/probe.exe", '--version')
-            $start.UseShellExecute = $false
-            $start.WorkingDirectory = $isolated
-            $process = [System.Diagnostics.Process]::Start($start)
-            if (!$process.WaitForExit(10000)) {
-              $process.Kill()
-              throw 'Missing-DLL probe did not terminate'
-            }
-            if ($process.ExitCode -ne -1073741515) {
-              throw "Expected STATUS_DLL_NOT_FOUND, got $($process.ExitCode)"
+            foreach ($missing in @($false, $true)) {
+              if ($missing) { Move-Item -LiteralPath $nativeDll -Destination $hiddenDll }
+              $start = [System.Diagnostics.ProcessStartInfo]::new("$isolated/probe.exe", '--version')
+              $start.UseShellExecute = $false
+              $start.WorkingDirectory = $isolated
+              $start.Environment['PATH'] = "$env:SYMCRYPT_LIB_PATH;$env:SystemRoot\System32;$env:SystemRoot"
+              $process = [System.Diagnostics.Process]::Start($start)
+              try {
+                if (!$process.WaitForExit(10000)) {
+                  $process.Kill()
+                  throw 'Native runtime probe did not terminate'
+                }
+                $expected = if ($missing) { -1073741515 } else { 0 }
+                if ($process.ExitCode -ne $expected) {
+                  $ambient = @("$env:SystemRoot\System32\symcrypt.dll", "$env:SystemRoot\symcrypt.dll") |
+                    Where-Object { Test-Path -LiteralPath $_ }
+                  throw "Expected loader status $expected, got $($process.ExitCode); ambient DLLs: $ambient"
+                }
+              } finally {
+                $process.Dispose()
+              }
             }
           } finally {
+            if (Test-Path -LiteralPath $hiddenDll) {
+              Move-Item -LiteralPath $hiddenDll -Destination $nativeDll
+            }
             [SymCryptLoaderProbe]::SetErrorMode($oldMode) | Out-Null
             Remove-Item "$isolated/probe.exe"
           }
