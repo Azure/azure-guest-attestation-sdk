@@ -292,7 +292,7 @@ mod tests {
     /// Synthetic ARK->ASK->VCEK fixtures. Key/cert generation is OpenSSL-only;
     /// the Windows backend's negative coverage comes from the real-evidence
     /// tamper tests below.
-    #[cfg(target_os = "linux")]
+    #[cfg(all(feature = "native", target_os = "linux"))]
     mod synthetic {
         use super::*;
         use openssl::asn1::{Asn1Object, Asn1OctetString, Asn1Time};

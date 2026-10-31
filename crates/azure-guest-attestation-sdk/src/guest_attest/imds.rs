@@ -28,24 +28,18 @@ impl ImdsClient {
     /// such as [`get_region`](Self::get_region) — and the CLI's endpoint
     /// auto-detection — could hang indefinitely instead of falling back.
     ///
-    /// In the rare event the timed client fails to build, a warning is logged
-    /// and an untimed default client is used as a last resort.
+    /// # Panics
+    ///
+    /// Panics if the HTTP client cannot be initialized. There is no untimed
+    /// fallback and no fallback to another cryptographic backend.
     pub fn new() -> Self {
         // Connect timeout fails fast when the metadata IP is unroutable;
         // the longer overall timeout accommodates TD Quote generation on Azure.
-        let http = Client::builder()
+        let http = crate::crypto::http_client_builder()
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(60))
             .build()
-            .unwrap_or_else(|e| {
-                tracing::warn!(
-                    target: "guest_attest",
-                    error = %e,
-                    "failed to build IMDS HTTP client with timeouts; \
-                     falling back to an untimed default client (requests may hang)"
-                );
-                Client::new()
-            });
+            .expect("initialize IMDS HTTP client with timeouts and selected crypto backend");
         Self { http }
     }
 

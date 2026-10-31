@@ -7,12 +7,12 @@
 //! MAA: certificate-chain validation to a pinned hardware root and signature
 //! verification of the report/quote.
 //!
-//! Gated behind the `verify` feature, which requires the `native` crypto
-//! backend: system OpenSSL on Linux, CNG (BCrypt) + CryptoAPI (crypt32) on
-//! Windows.
+//! Gated behind backend-neutral `verify` plus explicit `native` or `symcrypt`.
+//! Native uses OpenSSL on Linux and CNG/crypt32 on Windows. SymCrypt uses
+//! WebPKI path building and SymCrypt signature verification on both platforms.
 
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-compile_error!("the `verify` feature requires Linux (OpenSSL) or Windows (CNG/crypt32)");
+compile_error!("the `verify` feature currently supports Linux and Windows");
 
 mod crypto;
 mod roots;

@@ -1,6 +1,6 @@
 [package]
 name = "azure-tpm"
-version = "0.1.0"
+version = "0.2.0"
 description = "Platform-agnostic TPM 2.0 command interface for Azure guest VMs"
 documentation = "https://docs.rs/azure-tpm"
 readme = "README.md"
@@ -23,12 +23,12 @@ bitfield-struct = "0.6"
 # Workspace dependencies
 serde.workspace = true
 serde_json.workspace = true
-sha2.workspace = true
+sha2 = { workspace = true, optional = true }
 sha1 = { workspace = true, optional = true }
-digest.workspace = true
 hex.workspace = true
 tracing.workspace = true
-rand.workspace = true
+rand = { workspace = true, optional = true }
+symcrypt = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys.workspace = true
@@ -40,16 +40,19 @@ openssl = { version = "0.10", optional = true }
 [features]
 # Portable pure-Rust crypto (default; published to crates.io).
 default = ["rustcrypto"]
-rustcrypto = ["dep:sha1"]
+rustcrypto = ["dep:sha1", "dep:sha2", "dep:rand"]
 # Platform crypto: OpenSSL (Linux) / CNG-BCrypt (Windows). Used by the shipped
 # CLI so the binary carries no RustCrypto SHA-1. Requires a dynamic OpenSSL on
 # Linux. Build with `--no-default-features --features native`.
-native = ["dep:openssl"]
+native = ["dep:openssl", "dep:sha2", "dep:rand"]
+# Explicit SymCrypt primitives; native OS entropy is permitted.
+symcrypt = ["dep:symcrypt"]
 
 [lints]
 workspace = true
 
 [dev-dependencies]
+sha2.workspace = true
 
 # Reference-TPM harness for this crate's own tests. Gated behind
 # `--cfg vtpm_tests` so the heavy git-sourced `ms-tpm-20-ref` (vendored

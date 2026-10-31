@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Optional `symcrypt` backend for SDK/TPM primitives, explicit rustls TLS,
+  pinned-root offline verification, and the workspace tools. Native library
+  setup, deployment boundaries, and backend selection are documented in
+  [the SymCrypt guide](doc/symcrypt.md).
+
 - `azure-guest-attest tee-report PATH --type snp|tdx` inspects saved raw SNP
   and TDX reports offline without TPM or network access. Parsed output checks
   the exact report size but does not verify signatures or MACs. `--hex` and
@@ -23,8 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   This slice does not add stepping equivalence, VLEK, masked chip IDs, CRLs,
   minimum-TCB/measurement policy, or direct SNP device collection.
 
-- **Local (offline) attestation verification** behind a new `verify` feature
-  (requires the `native` backend: OpenSSL on Linux, CNG + crypt32 on Windows).
+- **Local (offline) attestation verification** behind a new backend-neutral
+  `verify` feature (requires explicit `native` or `symcrypt`).
   - `verify::verify_snp_report()` validates an AMD SEV-SNP report's VCEK chain
     to a **pinned AMD ARK root** (Milan, Genoa) and verifies the report
     signature (ECDSA P-384 / SHA-384).
@@ -72,12 +77,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- IMDS/MAA initialization no longer falls back to an
+  untimed HTTP client if constructing the selected client fails.
+
 - **Breaking:** `azure-guest-attest tee-report --raw` now emits binary bytes,
   consistent with `td-quote --raw`. Use `--hex` for the previous hex-text output.
   Malformed platform reports now produce an error rather than a successful
   truncation notice when requesting parsed output.
 
 ### Fixed
+
+- Preserve the SDK 0.1.1 borrowed-user-data convenience methods alongside the
+  0.2 options APIs. Carry forward strict runtime-claims error propagation and
+  user-data staging regressions, without reverting the single PCR-digest API.
 
 - Update locked `tokio` to 1.53.3 to resolve the
   RUSTSEC-2026-0386 I/O-safety advisory without suppressing the advisory policy.

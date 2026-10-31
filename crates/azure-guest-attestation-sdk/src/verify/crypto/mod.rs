@@ -3,8 +3,7 @@
 
 //! Backend-neutral cryptographic primitives for local attestation verification.
 //!
-//! The `verify` feature requires the `native` crypto backend, which is the
-//! system OpenSSL on Linux and CNG (BCrypt) + CryptoAPI (crypt32) on Windows.
+//! The `verify` feature requires an explicit `native` or `symcrypt` backend.
 //! Both backends expose the same interface — an opaque [`Cert`] handle, SHA-2
 //! hashing, raw ECDSA verification and certificate-chain validation against a
 //! *pinned* set of trust anchors — so the SNP/TDX verifiers never name a
@@ -12,12 +11,16 @@
 
 use std::io;
 
-#[cfg(target_os = "linux")]
+#[cfg(all(feature = "native", target_os = "linux"))]
 #[path = "openssl.rs"]
 mod backend;
 
-#[cfg(target_os = "windows")]
+#[cfg(all(feature = "native", target_os = "windows"))]
 #[path = "windows.rs"]
+mod backend;
+
+#[cfg(feature = "symcrypt")]
+#[path = "symcrypt.rs"]
 mod backend;
 
 pub(crate) use backend::{
