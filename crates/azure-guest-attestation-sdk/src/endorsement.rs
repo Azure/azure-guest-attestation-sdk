@@ -82,17 +82,29 @@ pub struct ThimClient {
 
 impl ThimClient {
     /// Create a client targeting `https://{region}.thim.azure.net`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the HTTP client cannot be initialized with the selected backend.
     pub fn new(region: &str) -> Self {
         Self {
-            http: Client::new(),
+            http: crate::crypto::http_client_builder()
+                .build()
+                .expect("initialize THIM HTTP client with selected crypto backend"),
             base_url: format!("https://{region}.thim.azure.net"),
         }
     }
 
     /// Create a client with a fully custom base URL (no trailing slash).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the HTTP client cannot be initialized with the selected backend.
     pub fn with_base_url(base_url: &str) -> Self {
         Self {
-            http: Client::new(),
+            http: crate::crypto::http_client_builder()
+                .build()
+                .expect("initialize THIM HTTP client with selected crypto backend"),
             base_url: base_url.trim_end_matches('/').to_string(),
         }
     }

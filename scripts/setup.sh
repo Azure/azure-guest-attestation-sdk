@@ -47,6 +47,12 @@ else
     || echo "  cargo-nextest install failed (non-fatal)"
 fi
 
+if ! cargo nextest show-config version --manifest-path "$(dirname "$0")/../Cargo.toml"; then
+  echo "ERROR: cargo-nextest does not meet the repository's version requirement." >&2
+  echo "Run: cargo install --locked --force --version 0.9.150 cargo-nextest" >&2
+  exit 1
+fi
+
 echo ""
 echo "Developer tool setup complete."
 echo ""

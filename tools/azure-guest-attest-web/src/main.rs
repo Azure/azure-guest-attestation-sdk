@@ -1386,7 +1386,7 @@ fn load_tls_config(
         )
     })?;
 
-    let config = rustls::ServerConfig::builder()
+    let config = tls_crypto::server_builder()?
         .with_no_client_auth()
         .with_single_cert(certs, key)
         .map_err(|e| {
@@ -1424,7 +1424,7 @@ fn build_tls_config_from_pem(
         )
     })?;
 
-    let config = rustls::ServerConfig::builder()
+    let config = tls_crypto::server_builder()?
         .with_no_client_auth()
         .with_single_cert(certs, key)
         .map_err(|e| {
@@ -1445,8 +1445,6 @@ fn generate_self_signed_config(
     bind_host: &str,
     extra_sans: &[String],
 ) -> std::io::Result<(String, String, Arc<rustls::ServerConfig>)> {
-    use rcgen::CertifiedKey;
-
     // Collect Subject Alternative Names
     let mut sans = vec![
         "localhost".to_string(),
@@ -1464,11 +1462,7 @@ fn generate_self_signed_config(
         }
     }
 
-    let CertifiedKey { cert, key_pair } = rcgen::generate_simple_self_signed(sans)
-        .map_err(|e| std::io::Error::other(format!("failed to generate self-signed cert: {e}")))?;
-
-    let cert_pem = cert.pem();
-    let key_pem = key_pair.serialize_pem();
+    let (cert_pem, key_pem) = tls_crypto::self_signed(sans)?;
 
     let config = build_tls_config_from_pem(&cert_pem, &key_pem)?;
 
@@ -1566,14 +1560,11 @@ async fn serve_https(
 // Main
 // ---------------------------------------------------------------------------
 
+mod tls_crypto;
+
 #[tokio::main]
 async fn main() {
     azure_guest_attestation_sdk::init_tracing();
-
-    // Install the ring crypto provider for rustls before any TLS config is built.
-    rustls::crypto::ring::default_provider()
-        .install_default()
-        .expect("failed to install rustls crypto provider");
 
     let cli = Cli::parse();
 

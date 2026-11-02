@@ -477,9 +477,7 @@ pub fn build_tee_only_payload(
     let rtype = parsed.runtime_claims_header.report_type;
     // Verbatim runtime-claims bytes — see the note in
     // build_tee_only_payload_from_evidence().
-    let runtime_data = parsed
-        .get_runtime_claims_raw_bytes(&raw)
-        .unwrap_or_default();
+    let runtime_data = parsed.get_runtime_claims_raw_bytes(&raw)?;
     let (evidence_field, evidence_bytes) = match rtype {
         crate::report::CvmReportType::SnpVmReport => {
             let snp_slice = &parsed.tee_report[..crate::report::SNP_VM_REPORT_SIZE];
@@ -1715,7 +1713,7 @@ mod tests {
             report_type: CvmReportType::SnpVmReport,
             tee_report: vec![0xAA; crate::report::SNP_VM_REPORT_SIZE],
             runtime_claims: None,
-            runtime_data: vec![],
+            runtime_data: br#"{ "user-data" : "challenge" }"#.to_vec(),
             platform_quote: vec![],
         };
         let endorsement = Endorsement {
@@ -1735,6 +1733,12 @@ mod tests {
         let vcek_b64 = inner["VcekCertChain"].as_str().unwrap();
         let vcek_decoded = URL_SAFE_NO_PAD.decode(vcek_b64).unwrap();
         assert_eq!(vcek_decoded, b"provided-vcek-chain");
+        assert_eq!(
+            URL_SAFE_NO_PAD
+                .decode(v["runtimeData"]["data"].as_str().unwrap())
+                .unwrap(),
+            evidence.runtime_data
+        );
     }
 
     #[test]

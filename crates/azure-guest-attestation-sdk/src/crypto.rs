@@ -8,27 +8,58 @@
 //! it is part of producing a usable token, so this lives on the attestation
 //! callout path — not the verification path.
 //!
-//! Two interchangeable backends are provided:
+//! Three interchangeable backends are provided:
 //!
 //! - **default (`rustcrypto`)**: the pure-Rust `aes-gcm` crate. Portable, no C
 //!   toolchain, published to crates.io.
 //! - **`native`**: platform crypto — OpenSSL on Linux, CNG/BCrypt on Windows —
 //!   so the shipped binary carries no RustCrypto AES implementation.
+//! - **`symcrypt`**: explicitly linked SymCrypt, including TLS.
 //!
-//! When both features are enabled, `native` takes precedence. Enabling neither
-//! is a compile error.
+//! `native` retains precedence over `rustcrypto`. SymCrypt is mutually exclusive
+//! with either backend. At least one backend must be selected.
 
 use std::io;
 
-#[cfg(all(not(feature = "native"), not(feature = "rustcrypto")))]
+pub(crate) fn http_client_builder() -> reqwest::blocking::ClientBuilder {
+    let builder = reqwest::blocking::Client::builder();
+    #[cfg(feature = "symcrypt")]
+    {
+        let roots = rustls::RootCertStore {
+            roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+        };
+        let config = rustls::ClientConfig::builder_with_provider(
+            rustls_symcrypt::default_symcrypt_provider_arc(),
+        )
+        .with_safe_default_protocol_versions()
+        .expect("SymCrypt supports the default TLS protocol versions")
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+        builder.use_preconfigured_tls(config)
+    }
+    #[cfg(not(feature = "symcrypt"))]
+    {
+        builder
+    }
+}
+
+#[cfg(all(feature = "symcrypt", any(feature = "native", feature = "rustcrypto")))]
 compile_error!(
-    "azure-guest-attestation-sdk requires exactly one crypto backend: enable `rustcrypto` (default) or `native`"
+    "`symcrypt` cannot be combined with `native` or `rustcrypto`; disable default features"
 );
+
+#[cfg(not(any(feature = "native", feature = "rustcrypto", feature = "symcrypt")))]
+compile_error!(
+    "azure-guest-attestation-sdk requires `rustcrypto` (default), `native`, or `symcrypt`"
+);
+
+#[cfg(all(feature = "verify", not(any(feature = "native", feature = "symcrypt"))))]
+compile_error!("`verify` requires an explicit `native` or `symcrypt` backend");
 
 /// AES-128/256-GCM decrypt. `key` selects the variant by length (16 or 32),
 /// `nonce` must be 12 bytes, `tag` 16 bytes. Returns the plaintext or an error
 /// on authentication failure / bad parameters.
-#[cfg(not(feature = "native"))]
+#[cfg(all(not(feature = "native"), feature = "rustcrypto"))]
 pub(crate) fn aes_gcm_decrypt(
     key: &[u8],
     nonce: &[u8],
@@ -60,6 +91,35 @@ pub(crate) fn aes_gcm_decrypt(
         }
     };
     result.map_err(|e| io::Error::other(format!("aes-gcm decrypt: {e}")))
+}
+
+#[cfg(feature = "symcrypt")]
+pub(crate) fn aes_gcm_decrypt(
+    key: &[u8],
+    nonce: &[u8],
+    aad: &[u8],
+    ciphertext: &[u8],
+    tag: &[u8],
+) -> io::Result<Vec<u8>> {
+    use symcrypt::{cipher::BlockCipherType, gcm::GcmExpandedKey};
+    if !matches!(key.len(), 16 | 32) || tag.len() != 16 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "AES-GCM requires a 16/32-byte key and 16-byte tag",
+        ));
+    }
+    let nonce: &[u8; 12] = nonce.try_into().map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "AES-GCM requires a 12-byte nonce",
+        )
+    })?;
+    let key = GcmExpandedKey::new(key, BlockCipherType::AesBlock)
+        .map_err(|e| io::Error::other(format!("SymCrypt AES key: {e}")))?;
+    let mut plaintext = ciphertext.to_vec();
+    key.decrypt_in_place(nonce, aad, &mut plaintext, tag)
+        .map_err(|e| io::Error::other(format!("SymCrypt AES-GCM decrypt: {e}")))?;
+    Ok(plaintext)
 }
 
 /// AES-128/256-GCM decrypt. `key` selects the variant by length (16 or 32),
@@ -282,6 +342,17 @@ mod tests {
     #[test]
     fn aes_gcm_rejects_bad_key_length() {
         assert!(aes_gcm_decrypt(&[0u8; 24], &[0u8; 12], &[], &[], &[0u8; 16]).is_err());
+    }
+
+    #[cfg(feature = "symcrypt")]
+    #[test]
+    fn aes_gcm_rejects_bad_nonce_and_tag_lengths() {
+        for nonce_len in [0, 1, 11, 13, 16] {
+            assert!(aes_gcm_decrypt(&[0; 16], &vec![0; nonce_len], &[], &[], &[0; 16]).is_err());
+        }
+        for tag_len in [0, 1, 12, 15, 17] {
+            assert!(aes_gcm_decrypt(&[0; 16], &[0; 12], &[], &[], &vec![0; tag_len]).is_err());
+        }
     }
 
     fn hex_bytes(s: &str) -> Vec<u8> {

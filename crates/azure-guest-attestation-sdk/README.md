@@ -22,6 +22,8 @@ Rust implementation of the Azure Attestation SDK for Confidential VMs (CVM) and 
 - **TrustedLaunch VM support** — auto-detected when CVM report is absent
 - **Stateless `parse` module** for offline report inspection
 - **Cross-Platform**: Windows and Linux support
+- **Optional SymCrypt backend** for primitives, TLS, and offline verification;
+  see [setup and offline backend selection](../../doc/symcrypt.md).
 
 ## Installation
 
@@ -29,7 +31,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-azure-guest-attestation-sdk = "0.1"
+azure-guest-attestation-sdk = "0.2"
 ```
 
 ## Quick Start
@@ -186,4 +188,3 @@ RUSTFLAGS="--cfg vtpm_tests" cargo clippy -p azure-guest-attestation-sdk --all-t
 ## License
 
 MIT License - see [LICENSE](../../LICENSE)
-

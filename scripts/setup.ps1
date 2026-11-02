@@ -76,5 +76,13 @@ if (Has-Command cargo-nextest) {
     }
 }
 
+if (-not (Has-Command cargo)) {
+    throw 'cargo not found; cannot verify the cargo-nextest version requirement.'
+}
+cargo nextest show-config version --manifest-path (Join-Path $PSScriptRoot '../Cargo.toml')
+if ($LASTEXITCODE -ne 0) {
+    throw 'cargo-nextest does not meet the repository requirement. Run: cargo install --locked --force --version 0.9.150 cargo-nextest'
+}
+
 Write-Host "Developer tool setup complete."
 Write-Host "Note: On Windows you may need Visual Studio Build Tools (MSVC) for building cdylib with the MSVC toolchain. Install the 'Desktop development with C++' workload or use the GNU toolchain via MinGW if preferred."

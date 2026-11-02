@@ -327,9 +327,7 @@ impl AttestationClient {
             Vec::new()
         };
 
-        let runtime_data = parsed
-            .get_runtime_claims_raw_bytes(&raw)
-            .unwrap_or_default();
+        let runtime_data = parsed.get_runtime_claims_raw_bytes(&raw)?;
 
         // Optionally fetch platform quote (TDX only for now)
         let platform_quote = if opts.fetch_platform_quote && rtype == CvmReportType::TdxVmReport {
@@ -609,6 +607,22 @@ impl AttestationClient {
         })
     }
 
+    /// Attest a guest with 0..=64 bytes of caller-supplied, hardware-bound user data.
+    ///
+    /// Preserves the other options and overrides their `user_data`. Staging or
+    /// CVM evidence failures are fatal; explicit data never falls back to
+    /// TrustedLaunch. An empty slice explicitly stages zeroes.
+    pub fn attest_guest_with_user_data(
+        &self,
+        provider: Provider,
+        options: Option<&AttestOptions>,
+        user_data: &[u8],
+    ) -> crate::error::Result<AttestResult> {
+        let mut options = options.cloned().unwrap_or_default();
+        options.user_data = Some(user_data.to_vec());
+        self.attest_guest(provider, Some(&options))
+    }
+
     /// TEE-only platform attestation (no TPM / PCR evidence).
     ///
     /// Collects CVM evidence, builds the TEE-only payload (SNP report +
@@ -649,6 +663,22 @@ impl AttestationClient {
                 })
             }
         }
+    }
+
+    /// Attest the platform with 0..=64 bytes of caller-supplied user data.
+    ///
+    /// Stages zero-padded data into the user-data NV index and sends the exact
+    /// accompanying runtime claims to MAA. Staging and evidence errors are
+    /// fatal. An empty slice explicitly stages zeroes.
+    pub fn attest_platform_with_user_data(
+        &self,
+        provider: Provider,
+        user_data: &[u8],
+    ) -> crate::error::Result<AttestResult> {
+        let options = PlatformAttestOptions {
+            user_data: Some(user_data.to_vec()),
+        };
+        self.attest_platform(provider, Some(&options))
     }
 
     /// Decrypt a guest attestation token envelope using the ephemeral key
@@ -1190,6 +1220,9 @@ mod tests {
     #[cfg(vtpm_tests)]
     #[test]
     fn get_cvm_evidence_accepts_user_data_exactly_64() {
+        let _guard = attestation::USER_DATA_TEST_LOCK
+            .lock()
+            .expect("user-data test lock");
         use azure_tpm_testkit::reference_tpm;
 
         let tpm = match reference_tpm() {

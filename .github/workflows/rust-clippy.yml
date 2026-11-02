@@ -42,9 +42,11 @@ jobs:
         run: cargo install clippy-sarif sarif-fmt
 
       - name: Run rust-clippy
+        # Backend combinations are linted in CI; --all-features is invalid.
         run:
           cargo clippy
-          --all-features
+          --workspace
+          --all-targets
           --message-format=json | clippy-sarif | tee rust-clippy-results.sarif | sarif-fmt
         continue-on-error: true
 

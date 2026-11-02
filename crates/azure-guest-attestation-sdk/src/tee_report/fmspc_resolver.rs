@@ -88,6 +88,10 @@ pub struct FmspcResolver {
 
 impl FmspcResolver {
     /// Construct a resolver pointed at the public Azure THIM mirror.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the HTTP client cannot be initialized with the selected backend.
     pub fn new() -> Self {
         Self::with_base_url(AZURE_THIM_GLOBAL_BASE_URL)
     }
@@ -96,9 +100,15 @@ impl FmspcResolver {
     ///
     /// `base_url` is the scheme + host (e.g. `https://api.trustedservices.intel.com`).
     /// Paths of the form `/{tee}/certification/v4/tcb?fmspc=<hex>` are appended.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the HTTP client cannot be initialized with the selected backend.
     pub fn with_base_url(base_url: impl Into<String>) -> Self {
         Self {
-            http: Client::new(),
+            http: crate::crypto::http_client_builder()
+                .build()
+                .expect("initialize FMSPC HTTP client with selected crypto backend"),
             base_url: base_url.into(),
         }
     }

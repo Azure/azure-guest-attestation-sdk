@@ -1,6 +1,8 @@
 # cargo-nextest configuration
 # https://nexte.st/docs/configuration/
 
+nextest-version = "0.9.150"
+
 [store]
 # Directory for nextest artifacts (relative to workspace root)
 dir = "target/nextest"

@@ -10,6 +10,14 @@ This crate provides a platform-agnostic TPM 2.0 interface including:
 - **Helpers** (`helpers`): Internal utilities for command building
 - **Event log** (`event_log`): TCG event log parsing
 
+## Crypto backend
+
+`rustcrypto` is the default. `native` retains the existing platform backend;
+`symcrypt` selects SymCrypt for event-log hashes, PCR-policy hashing, and
+session entropy. Select SymCrypt with `--no-default-features --features symcrypt`;
+combining it with another backend is a compile error.
+See [native library setup and deployment](../../doc/symcrypt.md).
+
 ## Architecture
 
 ```text

@@ -14,7 +14,7 @@ rust-version.workspace = true
 # Direct path dep (not workspace-inherited) so `default-features = false`
 # actually takes effect — the crypto/TLS backend is chosen via this crate's
 # features below. Inherited deps ignore a member-level `default-features`.
-azure-guest-attestation-sdk = { path = "../../crates/azure-guest-attestation-sdk", version = "0.1.0", default-features = false }
+azure-guest-attestation-sdk = { path = "../../crates/azure-guest-attestation-sdk", version = "0.2.0", default-features = false }
 
 # Workspace dependencies
 clap.workspace = true
@@ -35,4 +35,5 @@ rustcrypto = ["azure-guest-attestation-sdk/rustcrypto"]
 # Platform crypto + native-tls (OpenSSL on Linux, SChannel/CNG on Windows).
 # The shipped release binary is built with `--no-default-features --features native`.
 native = ["azure-guest-attestation-sdk/native"]
+symcrypt = ["azure-guest-attestation-sdk/symcrypt"]
 with-x509 = ["x509-parser"]

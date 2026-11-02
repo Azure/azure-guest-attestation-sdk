@@ -10,6 +10,7 @@ compatibility decisions, and verification strategy.
 |---|---|
 | Workspace layers, modules, and attestation flows | [Architecture overview](../ARCHITECTURE.md) |
 | Offline SNP report verification and VCEK binding | [SNP verification](snp-verification.md) |
+| SymCrypt setup, trust boundaries, and offline backend selection | [SymCrypt backend](symcrypt.md) |
 
 ## Maintaining These Pages
 

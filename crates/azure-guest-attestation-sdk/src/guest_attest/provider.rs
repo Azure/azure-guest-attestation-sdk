@@ -104,18 +104,19 @@ impl MaaProvider {
     /// (e.g. `https://…/attest/AzureGuest?api-version=2020-10-01`). When
     /// only the base URL is given the default guest-attest path and
     /// api-version are appended.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the HTTP client cannot be initialized with the selected backend.
     pub fn new(endpoint: impl Into<String>) -> Self {
         let raw: String = endpoint.into();
         let resolved = resolve_maa_url(&raw, GUEST_ATTEST_PATH, GUEST_ATTEST_API_VERSION);
         tracing::info!(target: "guest_attest", provider = "MAA", raw_endpoint = %raw, resolved_endpoint = %resolved, "MAA provider created");
         // Extended timeout (5 minutes) to accommodate potentially slow responses.
-        let client = Client::builder()
+        let client = crate::crypto::http_client_builder()
             .timeout(Duration::from_secs(300))
             .build()
-            .unwrap_or_else(|e| {
-                tracing::warn!(target: "guest_attest", error=%e, "MAA Client builder failed, falling back to default client");
-                Client::new()
-            });
+            .expect("initialize MAA HTTP client with timeout and selected crypto backend");
         Self {
             client,
             endpoint: resolved,
@@ -245,7 +246,9 @@ pub fn submit_tee_only(
     if report_type == crate::report::CvmReportType::TdxVmReport && !endpoint.contains("TdxVm") {
         tracing::warn!(target: "guest_attest", %endpoint, "TDX evidence but endpoint name lacks 'TdxVm'");
     }
-    let client = reqwest::blocking::Client::new();
+    let client = crate::crypto::http_client_builder()
+        .build()
+        .map_err(|e| io::Error::other(format!("initialize TEE-only HTTP client: {e}")))?;
     tracing::info!(target: "guest_attest", %endpoint, "POST tee-only attestation request");
     let resp = client
         .post(&endpoint)

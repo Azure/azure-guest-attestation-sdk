@@ -12,13 +12,14 @@ rust-version.workspace = true
 
 [dependencies]
 # Use workspace dependency for the SDK
-azure-guest-attestation-sdk.workspace = true
+azure-guest-attestation-sdk = { path = "../../crates/azure-guest-attestation-sdk", default-features = false }
 
 # Workspace dependencies
 serde.workspace = true
 serde_json.workspace = true
 base64.workspace = true
 hex.workspace = true
+tracing.workspace = true
 
 # CLI
 clap.workspace = true
@@ -27,9 +28,12 @@ axum = { version = "0.7", features = ["json"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
 
 # TLS support for HTTPS mode
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
-tokio-rustls = "0.26"
-rcgen = { version = "0.13", default-features = false, features = ["ring", "pem", "crypto"] }
+rustls.workspace = true
+tokio-rustls = { version = "0.26", default-features = false, features = ["tls12"] }
+rcgen = { version = "0.13", default-features = false, features = ["pem"] }
+symcrypt = { workspace = true, optional = true }
+rustls-symcrypt = { workspace = true, optional = true }
+yasna = { version = "0.5", optional = true }
 
 # Low-level connection handling for TLS serve loop
 hyper = { version = "1", features = ["server"] }
@@ -37,5 +41,8 @@ hyper-util = { version = "0.1", features = ["tokio", "server-auto", "http1", "ht
 tower = { version = "0.5", features = ["util"] }
 
 [features]
-default = []
+default = ["rustcrypto"]
+rustcrypto = ["azure-guest-attestation-sdk/rustcrypto", "rustls/ring", "rcgen/ring", "rcgen/crypto"]
+native = ["azure-guest-attestation-sdk/native", "rustls/ring", "rcgen/ring", "rcgen/crypto"]
+symcrypt = ["azure-guest-attestation-sdk/symcrypt", "dep:symcrypt", "dep:rustls-symcrypt", "dep:yasna"]
 static = []

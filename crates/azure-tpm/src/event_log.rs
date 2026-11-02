@@ -5,8 +5,6 @@
 #![allow(missing_docs)]
 
 use crate::types::PcrAlgorithm;
-use digest::Digest;
-use sha2::{Sha256, Sha384};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
@@ -619,18 +617,8 @@ pub fn is_mostly_printable(data: &[u8]) -> bool {
 fn extend_digest(alg: PcrAlgorithm, current: &[u8], measurement: &[u8]) -> Vec<u8> {
     match alg {
         PcrAlgorithm::Sha1 => crate::crypto::sha1_concat(&[current, measurement]),
-        PcrAlgorithm::Sha256 => {
-            let mut hasher = Sha256::new();
-            hasher.update(current);
-            hasher.update(measurement);
-            hasher.finalize().to_vec()
-        }
-        PcrAlgorithm::Sha384 => {
-            let mut hasher = Sha384::new();
-            hasher.update(current);
-            hasher.update(measurement);
-            hasher.finalize().to_vec()
-        }
+        PcrAlgorithm::Sha256 => crate::crypto::sha256_concat(&[current, measurement]),
+        PcrAlgorithm::Sha384 => crate::crypto::sha384_concat(&[current, measurement]),
     }
 }
 

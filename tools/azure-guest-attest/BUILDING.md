@@ -10,6 +10,10 @@ cargo build --locked --release -p azure-guest-attest
 
 ## Static CRT Build (Windows MSVC)
 
+For `--no-default-features --features symcrypt`, first follow
+[SymCrypt native library setup](../../doc/symcrypt.md). The executable then
+depends on the separately deployed SymCrypt library, irrespective of CRT flags.
+
 ### Prerequisites
 
 - Rust 1.90 or newer with the `x86_64-pc-windows-msvc` target installed.

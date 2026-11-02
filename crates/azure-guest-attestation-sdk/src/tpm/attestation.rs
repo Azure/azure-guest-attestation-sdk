@@ -473,8 +473,61 @@ fn pad_user_data(input: &[u8]) -> [u8; 64] {
 // Tests
 // ---------------------------------------------------------------------------
 
+#[cfg(all(test, vtpm_tests))]
+pub(crate) static USER_DATA_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
+    struct FailingUserDataTpm;
+
+    impl azure_tpm::RawTpm for FailingUserDataTpm {
+        fn transmit_raw(&self, _command: &[u8]) -> std::io::Result<Vec<u8>> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "injected TPM failure",
+            ))
+        }
+    }
+
+    #[test]
+    fn requested_user_data_staging_failure_is_fatal() {
+        use crate::client::{AttestOptions, AttestationClient, PlatformAttestOptions, Provider};
+        let tpm = azure_tpm::Tpm::from_raw_reference(Box::new(FailingUserDataTpm));
+        let error = super::get_cvm_report_raw(&tpm, Some(b"challenge")).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(error.to_string().contains("failed to stage user_data"));
+        assert!(error.to_string().contains("injected TPM failure"));
+        let client = AttestationClient::from_tpm(tpm);
+        for data in [
+            vec![],
+            b"challenge".to_vec(),
+            vec![0xAA; 64],
+            vec![0xBB; 65],
+        ] {
+            let guest_options = AttestOptions {
+                user_data: Some(data.clone()),
+                ..Default::default()
+            };
+            let platform_options = PlatformAttestOptions {
+                user_data: Some(data.clone()),
+            };
+            for result in [
+                client.attest_guest(Provider::Loopback, Some(&guest_options)),
+                client.attest_platform(Provider::Loopback, Some(&platform_options)),
+                client.attest_guest_with_user_data(Provider::Loopback, None, &data),
+                client.attest_platform_with_user_data(Provider::Loopback, &data),
+            ] {
+                let error = result.expect_err("requested data must not be ignored");
+                let expected = if data.len() > 64 {
+                    "exceeds 64 bytes"
+                } else {
+                    "failed to stage user_data"
+                };
+                assert!(error.to_string().contains(expected), "{error}");
+            }
+        }
+    }
+
     #[cfg(vtpm_tests)]
     use super::ensure_user_data_index_and_write;
     use super::pad_user_data;
@@ -492,6 +545,9 @@ mod tests {
     #[cfg(vtpm_tests)]
     #[test]
     fn vtpm_user_data_index_write_and_read() {
+        let _guard = super::USER_DATA_TEST_LOCK
+            .lock()
+            .expect("user-data test lock");
         let tpm = reference_tpm().expect("failed to open reference TPM");
         let raw = b"hello";
         let padded = pad_user_data(raw);
@@ -519,6 +575,30 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[cfg(vtpm_tests)]
+    #[test]
+    fn vtpm_requested_user_data_is_staged_before_report_read() {
+        let _guard = super::USER_DATA_TEST_LOCK
+            .lock()
+            .expect("user-data test lock");
+        let tpm = reference_tpm().expect("reference TPM");
+        for data in [vec![0xAA; 64], b"challenge".to_vec(), vec![]] {
+            super::get_cvm_report_raw(&tpm, Some(&data))
+                .expect_err("reference TPM has no CVM report");
+            assert_eq!(
+                tpm.read_nv_index(super::NV_INDEX_USER_DATA)
+                    .expect("read staged data"),
+                pad_user_data(&data),
+            );
+        }
+        super::get_cvm_report_raw(&tpm, Some(&[0xFF; 65])).expect_err("reject oversized data");
+        assert_eq!(
+            tpm.read_nv_index(super::NV_INDEX_USER_DATA)
+                .expect("read unchanged data"),
+            vec![0; 64],
+        );
     }
 
     #[test]
