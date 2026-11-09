@@ -54,6 +54,32 @@ fn reports() -> [(&'static str, Vec<u8>, String); 2] {
 }
 
 #[test]
+fn saved_snp_v6_report_displays_etcb_and_preserves_binary() {
+    let bytes = include_bytes!(
+        "../../../crates/azure-guest-attestation-sdk/src/verify/testdata/snp_report_v6_synthetic.bin"
+    );
+    let input = TempFile::new(bytes);
+    let output = cli("snp", &input, &[]);
+    assert!(output.status.success(), "{output:?}");
+    let display = String::from_utf8(output.stdout).unwrap();
+    assert!(display.contains("version: 6"));
+    assert!(display.contains("cpuid: 19/01/01"));
+    for (name, offset) in [
+        ("current_etcb", 0x220),
+        ("launch_etcb", 0x240),
+        ("committed_etcb", 0x260),
+    ] {
+        assert!(display.contains(&format!(
+            "{name} (32 bytes):\n    {}\n",
+            hex::encode(&bytes[offset..offset + 32])
+        )));
+    }
+    let output = cli("snp", &input, &["--raw"]);
+    assert!(output.status.success());
+    assert_eq!(output.stdout, bytes);
+}
+
+#[test]
 fn saved_reports_pretty_print_offline() {
     for (command, bytes, expected) in reports() {
         let input = TempFile::new(&bytes);

@@ -137,7 +137,7 @@ fn validate_extensions(
     extensions: &[X509Extension<'_>],
     report: &SnpReport,
 ) -> io::Result<Generation> {
-    if !matches!(report.version, 2..=5) {
+    if !matches!(report.version, 2..=6) {
         return Err(invalid_data("unsupported SNP report version"));
     }
     if (report.flags >> 2) & 7 != 0 {
@@ -350,7 +350,7 @@ mod tests {
             validate(&der, &report).unwrap();
         }
         let (der, mut report) = fixture(0);
-        for version in [0, 1, 6, u32::MAX] {
+        for version in [0, 1, 7, u32::MAX] {
             report.version = version;
             invalid(validate(&der, &report), "report version");
         }
@@ -703,7 +703,7 @@ mod tests {
             let mut changed = cert.extensions().to_vec();
             replace_extension(&mut changed, PRODUCT_NAME, &value);
             report._reserved1[..2].copy_from_slice(&[family, model]);
-            for version in 3..=5 {
+            for version in 3..=6 {
                 report.version = version;
                 for step in [1, 2] {
                     report._reserved1[2] = step;
