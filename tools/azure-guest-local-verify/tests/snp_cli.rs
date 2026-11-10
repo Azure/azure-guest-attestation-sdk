@@ -7,6 +7,22 @@ use std::{path::PathBuf, process::Command};
 
 const PLATFORMS: [&str; 3] = ["milan", "genoa", "turin"];
 
+#[test]
+fn snp_cli_does_not_trust_synthetic_v6_evidence() {
+    let output = Command::new(env!("CARGO_BIN_EXE_azure-guest-local-verify"))
+        .args(["--json", "snp"])
+        .arg(fixture("snp_report_v6_synthetic.bin"))
+        .arg("--vcek")
+        .arg(fixture("snp_v6_synthetic_chain.pem"))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["passed"], false);
+    assert_eq!(json["policy_checked"], false);
+    assert!(json.get("checks").is_none());
+}
+
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../crates/azure-guest-attestation-sdk/src/verify/testdata")

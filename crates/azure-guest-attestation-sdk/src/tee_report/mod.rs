@@ -56,6 +56,9 @@ pub fn pretty_snp(report: &snp::SnpReport) -> String {
     fmt_hex_block(&mut out, "  report_id", &report.report_id);
     fmt_hex_block(&mut out, "  report_id_ma", &report.report_id_ma);
     let _ = writeln!(out, "  reported_tcb: 0x{:016x}", report.reported_tcb);
+    if let Some([family, model, stepping]) = report.cpuid() {
+        let _ = writeln!(out, "  cpuid: {family:02x}/{model:02x}/{stepping:02x}");
+    }
     fmt_hex_block(&mut out, "  chip_id", &report.chip_id);
     let _ = writeln!(out, "  committed_tcb: 0x{:016x}", report.committed_tcb);
     let _ = writeln!(
@@ -69,6 +72,15 @@ pub fn pretty_snp(report: &snp::SnpReport) -> String {
         report.committed_major, report.committed_minor, report.committed_build
     );
     let _ = writeln!(out, "  launch_tcb: 0x{:016x}", report.launch_tcb);
+    if let Some((launch, current)) = report.mitigation_vectors() {
+        let _ = writeln!(out, "  launch_mit_vector: 0x{launch:016x}");
+        let _ = writeln!(out, "  current_mit_vector: 0x{current:016x}");
+    }
+    if let Some(etcb) = report.extended_tcb() {
+        fmt_hex_block(&mut out, "  current_etcb", &etcb.current);
+        fmt_hex_block(&mut out, "  launch_etcb", &etcb.launch);
+        fmt_hex_block(&mut out, "  committed_etcb", &etcb.committed);
+    }
     fmt_hex_block(&mut out, "  signature", &report.signature);
     out
 }
@@ -196,6 +208,32 @@ mod tests {
         assert!(s.contains("author_key_digest"));
         assert!(s.contains("chip_id"));
         assert!(s.contains("launch_tcb"));
+    }
+
+    #[test]
+    fn pretty_snp_v6_displays_extended_fields_only_when_defined() {
+        let mut bytes = [0; snp::SNP_REPORT_SIZE];
+        bytes[..4].copy_from_slice(&6u32.to_le_bytes());
+        bytes[0x188..0x18b].copy_from_slice(&[0x19, 1, 1]);
+        bytes[0x220..0x240].fill(0x11);
+        bytes[0x240..0x260].fill(0x22);
+        bytes[0x260..0x280].fill(0x33);
+        let mut report = crate::parse::snp_report(&bytes).unwrap();
+        let display = pretty_snp(&report);
+        assert!(display.contains("cpuid: 19/01/01"));
+        assert!(display.contains("launch_mit_vector: 0x0000000000000000"));
+        assert!(display.contains("current_mit_vector: 0x0000000000000000"));
+        for (name, value) in [
+            ("current_etcb", "11"),
+            ("launch_etcb", "22"),
+            ("committed_etcb", "33"),
+        ] {
+            assert!(display.contains(&format!("{name} (32 bytes):\n    {}\n", value.repeat(32))));
+        }
+        for version in 2..=5 {
+            report.version = version;
+            assert!(!pretty_snp(&report).contains("_etcb"));
+        }
     }
 
     // -----------------------------------------------------------------------
