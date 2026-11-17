@@ -1239,7 +1239,7 @@ fn main() -> anyhow::Result<()> {
                     if let Some(raw) = &result.token {
                         writeln!(writer, "Token (raw/envelope b64url): {raw}")?;
                     }
-                    if decode {
+                    if decode && verification_error.is_none() {
                         writeln!(writer, "Token (decoded):")?;
                         decode_and_print_jwt(tok, &mut *writer)?;
                     }
