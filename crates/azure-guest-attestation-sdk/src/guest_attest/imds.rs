@@ -12,6 +12,25 @@ use reqwest::blocking::Client;
 use std::io;
 use std::time::Duration;
 
+const THROTTLE_MAX_ATTEMPTS: u32 = 4;
+const THROTTLE_BASE_DELAY: Duration = Duration::from_secs(2);
+
+// IMDS documents HTTP 429 for throttling:
+// https://learn.microsoft.com/en-us/azure/virtual-machines/instance-metadata-service#rate-limiting
+// HTTP 403 with RequestRateLimitExceeded is based on testing the IMDS /acc/tdquote endpoint.
+fn is_throttled(status: reqwest::StatusCode, body: &str) -> bool {
+    status == reqwest::StatusCode::TOO_MANY_REQUESTS
+        || (status == reqwest::StatusCode::FORBIDDEN && body.contains("RequestRateLimitExceeded"))
+}
+
+fn throttle_delay(attempt: u32, retry_after: Option<&reqwest::header::HeaderValue>) -> Duration {
+    retry_after
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .map(|s| Duration::from_secs(s.min(60)))
+        .unwrap_or(THROTTLE_BASE_DELAY * 2u32.pow(attempt - 1))
+}
+
 /// Subset IMDS client for platform endorsements (SNP VCEK chain + TDX quote).
 ///
 /// Network errors are mapped to [`io::Error`].
@@ -44,12 +63,25 @@ impl ImdsClient {
     }
 
     fn get_json(&self, url: &str) -> io::Result<serde_json::Value> {
-        let resp = self
-            .http
-            .get(url)
-            .header("Metadata", "true")
-            .send()
-            .map_err(|e| io::Error::other(format!("http error: {e}")))?;
+        let mut attempt = 1;
+        let resp = loop {
+            let resp = self
+                .http
+                .get(url)
+                .header("Metadata", "true")
+                .send()
+                .map_err(|e| io::Error::other(format!("http error: {e}")))?;
+            if resp.status() != reqwest::StatusCode::TOO_MANY_REQUESTS
+                || attempt >= THROTTLE_MAX_ATTEMPTS
+            {
+                break resp;
+            }
+            std::thread::sleep(throttle_delay(
+                attempt,
+                resp.headers().get(reqwest::header::RETRY_AFTER),
+            ));
+            attempt += 1;
+        };
         let status = resp.status();
         if !status.is_success() {
             return Err(io::Error::other(format!("status {status}")));
@@ -142,15 +174,27 @@ impl ImdsClient {
         // First attempt: standard base64 with padding
         let std_b64 = STANDARD.encode(rep);
         let body_std = serde_json::json!({"report": std_b64});
-        let resp_std = self
-            .http
-            .post(TDQUOTE_ENDPOINT)
-            .header("Metadata", "true")
-            .json(&body_std)
-            .send()
-            .map_err(|e| io::Error::other(format!("tdquote http (std b64) error: {e}")))?;
-        let status_std = resp_std.status();
-        let text_std = resp_std.text().unwrap_or_default();
+        let mut attempt = 1;
+        let (status_std, text_std) = loop {
+            let resp_std = self
+                .http
+                .post(TDQUOTE_ENDPOINT)
+                .header("Metadata", "true")
+                .json(&body_std)
+                .send()
+                .map_err(|e| io::Error::other(format!("tdquote http (std b64) error: {e}")))?;
+            let status = resp_std.status();
+            let retry_after = resp_std
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .cloned();
+            let text = resp_std.text().unwrap_or_default();
+            if !is_throttled(status, &text) || attempt >= THROTTLE_MAX_ATTEMPTS {
+                break (status, text);
+            }
+            std::thread::sleep(throttle_delay(attempt, retry_after.as_ref()));
+            attempt += 1;
+        };
         if status_std.is_success() {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text_std) {
                 if let Some(quote_enc) = v.get("quote").and_then(|x| x.as_str()) {
@@ -168,6 +212,13 @@ impl ImdsClient {
             }
             return Err(io::Error::other(format!(
                 "tdquote success status but missing/invalid JSON: {text_std}"
+            )));
+        }
+
+        // Still throttled: a URL-safe re-POST would only consume another rate-limit slot.
+        if is_throttled(status_std, &text_std) {
+            return Err(io::Error::other(format!(
+                "tdquote throttled (status {status_std}) after {attempt} attempts: {text_std}"
             )));
         }
 
@@ -218,6 +269,41 @@ mod tests {
     use super::*;
     use injectorpp::interface::injector::*;
     use std::sync::Mutex;
+
+    #[test]
+    fn is_throttled_matches_imds_and_wireserver() {
+        use reqwest::StatusCode;
+        assert!(is_throttled(StatusCode::TOO_MANY_REQUESTS, ""));
+        assert!(is_throttled(
+            StatusCode::FORBIDDEN,
+            "<Error><Code>RequestRateLimitExceeded</Code></Error>"
+        ));
+        assert!(!is_throttled(
+            StatusCode::FORBIDDEN,
+            "<Error><Code>Forbidden</Code></Error>"
+        ));
+        assert!(!is_throttled(StatusCode::BAD_REQUEST, ""));
+        assert!(!is_throttled(StatusCode::OK, ""));
+    }
+
+    #[test]
+    fn throttle_delay_backoff_and_retry_after() {
+        use reqwest::header::HeaderValue;
+        assert_eq!(throttle_delay(1, None), Duration::from_secs(2));
+        assert_eq!(throttle_delay(3, None), Duration::from_secs(8));
+        assert_eq!(
+            throttle_delay(1, Some(&HeaderValue::from_static("5"))),
+            Duration::from_secs(5)
+        );
+        assert_eq!(
+            throttle_delay(1, Some(&HeaderValue::from_static("600"))),
+            Duration::from_secs(60)
+        );
+        assert_eq!(
+            throttle_delay(2, Some(&HeaderValue::from_static("soon"))),
+            Duration::from_secs(4)
+        );
+    }
 
     // injectorpp patches process-global memory, so tests that install mocks
     // must not run concurrently under `cargo test`. Serialize them behind a
