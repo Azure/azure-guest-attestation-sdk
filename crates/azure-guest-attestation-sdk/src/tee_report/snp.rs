@@ -7,13 +7,13 @@ pub const SNP_REPORT_SIZE: usize = 0x4a0;
 /// Size of `report_data` member in [`SnpReport`].
 pub const SNP_REPORT_DATA_SIZE: usize = 64;
 
-/// Report structure.
-/// See `ATTESTATION_REPORT` in Table 22, "SEV Secure Nested Paging Firmware ABI specification", Revision 1.55.
+/// Report structure, preserving the 1,184-byte wire layout for versions 2 through 6.
+/// See `ATTESTATION_REPORT` in AMD 56860 revision 1.59, Table 27.
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct SnpReport {
     /// Version number of this attestation report.
-    /// Set to 2h for this specification.
+    /// Version-dependent fields are exposed through accessors below.
     pub version: u32,
     /// The guest SVN.
     pub guest_svn: u32,
@@ -85,33 +85,59 @@ pub struct SnpReport {
     pub committed_major: u8,
     /// Reserved
     pub _reserved3: u8,
-    /// The CurrentTcb at the time the guest
-    /// was launched or imported.
+    /// The launch/import TCB (CommittedTcb in the v6 specification).
     pub launch_tcb: u64,
-    /// Reserved
+    /// Version-dependent fields and reserved bytes; use the accessors below.
     pub _reserved4: [u8; 168],
-    /// Signature of bytes inclusive of this report.
+    /// Signature over bytes 0x000 through 0x29f inclusive.
     pub signature: [u8; 512],
 }
 
+/// Raw extended TCB claims from a version 6 SNP report.
+///
+/// Each 256-bit value is preserved in wire order. Component interpretation is
+/// processor-specific; these bytes do not establish minimum TCB policy or
+/// certificate binding. They are authenticated only after report verification.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SnpExtendedTcb {
+    /// CURRENT_ETCB at offset 0x220.
+    pub current: [u8; 32],
+    /// LAUNCH_ETCB at offset 0x240.
+    pub launch: [u8; 32],
+    /// COMMITTED_ETCB at offset 0x260.
+    pub committed: [u8; 32],
+}
+
 impl SnpReport {
-    /// Signed CPUID family, model, and stepping for report versions 3 through 5.
+    /// Signed CPUID family, model, and stepping for report versions 3 through 6.
     /// `None` means this layout does not define those fields, not zero identity.
     /// This accessor does not validate the report or authenticate its contents.
     pub fn cpuid(&self) -> Option<[u8; 3]> {
-        matches!(self.version, 3..=5)
+        matches!(self.version, 3..=6)
             .then(|| [self._reserved1[0], self._reserved1[1], self._reserved1[2]])
     }
 
-    /// Launch and current mitigation bit vectors for report version 5.
+    /// Launch and current mitigation bit vectors for report versions 5 and 6.
     /// Older versions do not provide mitigation-vector claims. No required-bit
     /// policy is applied and unknown bits are preserved.
     pub fn mitigation_vectors(&self) -> Option<(u64, u64)> {
-        (self.version == 5).then(|| {
+        matches!(self.version, 5 | 6).then(|| {
             (
                 u64::from_le_bytes(self._reserved4[..8].try_into().unwrap()),
                 u64::from_le_bytes(self._reserved4[8..16].try_into().unwrap()),
             )
+        })
+    }
+
+    /// Extended TCB values for report version 6, or `None` for other versions.
+    ///
+    /// This accessor does not validate or authenticate the report. It preserves
+    /// all ETCB bits without assuming a processor-specific component layout.
+    pub fn extended_tcb(&self) -> Option<SnpExtendedTcb> {
+        (self.version == 6).then(|| SnpExtendedTcb {
+            current: self._reserved4[0x28..0x48].try_into().unwrap(),
+            launch: self._reserved4[0x48..0x68].try_into().unwrap(),
+            committed: self._reserved4[0x68..0x88].try_into().unwrap(),
         })
     }
 }
@@ -144,9 +170,47 @@ mod tests {
         turin.version = 2;
         assert_eq!(turin.cpuid(), None);
         assert_eq!(turin.mitigation_vectors(), None);
-        turin.version = 6;
+        turin.version = 7;
         assert_eq!(turin.cpuid(), None);
         assert_eq!(turin.mitigation_vectors(), None);
+    }
+
+    #[test]
+    fn snp_v6_fields_preserve_wire_bytes_and_version_gating() {
+        let mut bytes = [0; SNP_REPORT_SIZE];
+        bytes[..4].copy_from_slice(&6u32.to_le_bytes());
+        bytes[0x188..0x18b].copy_from_slice(&[0x1a, 2, 1]);
+        bytes[0x1f8..0x200].copy_from_slice(&0x0102_0304_0506_0708u64.to_le_bytes());
+        bytes[0x200..0x208].copy_from_slice(&0x8877_6655_4433_2211u64.to_le_bytes());
+        let current = std::array::from_fn(|i| i as u8);
+        let launch = std::array::from_fn(|i| 0x40 + i as u8);
+        let committed = std::array::from_fn(|i| 0x80 + i as u8);
+        bytes[0x220..0x240].copy_from_slice(&current);
+        bytes[0x240..0x260].copy_from_slice(&launch);
+        bytes[0x260..0x280].copy_from_slice(&committed);
+        bytes[0x29f] = 0xfe; // parsing is permissive, unlike verification
+        bytes[0x2a0] = 0xa5;
+        let report = crate::parse::snp_report(&bytes).unwrap();
+        assert_eq!(report.cpuid(), Some([0x1a, 2, 1]));
+        assert_eq!(
+            report.mitigation_vectors(),
+            Some((0x0102_0304_0506_0708, 0x8877_6655_4433_2211))
+        );
+        assert_eq!(
+            report.extended_tcb().unwrap(),
+            SnpExtendedTcb {
+                current,
+                launch,
+                committed
+            }
+        );
+        assert_eq!(report.signature[0], 0xa5);
+        for version in [0, 1, 2, 3, 4, 5, 7, u32::MAX] {
+            let mut other = report;
+            other.version = version;
+            assert_eq!(other.extended_tcb(), None);
+        }
+        assert!(crate::parse::snp_report(&bytes[..SNP_REPORT_SIZE - 1]).is_err());
     }
 
     #[test]

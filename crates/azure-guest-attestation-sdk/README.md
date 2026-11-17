@@ -107,6 +107,14 @@ See the [SNP verification design](../../doc/snp-verification.md) for supported
 formats, compatibility rules, trust boundaries, and tests, or the
 [design index](../../doc/README.md) for other topics.
 
+Report versions 2 through 6 are supported for guest reports signed by a legacy
+VCEK on the supported Milan/Genoa/Turin mappings. Version 6 exposes signed
+CURRENT_ETCB, LAUNCH_ETCB and COMMITTED_ETCB through
+`SnpReport::extended_tcb()` without changing the report's wire layout.
+ETCB is authenticated but not interpreted or subjected to minimum-TCB policy.
+Host reports, chip-secret VCEK/VLEK and Venice verification remain unsupported.
+See the [v6 scope and fixture limitations](../../doc/snp-verification.md#version-6).
+
 ## Testing
 
 The SDK ships with comprehensive tests backed by the

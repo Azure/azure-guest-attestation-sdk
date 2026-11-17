@@ -69,7 +69,8 @@ pub struct SnpVerifyResult {
 /// The chain is validated to a **pinned** AMD ARK root and the report signature
 /// (ECDSA P-384 / SHA-384 over `report_bytes[..0x2A0]`) is checked under the
 /// VCEK public key. The input must be exactly 1,184 bytes, use report version
-/// 2..=5, select VCEK (not VLEK), and expose an unmasked chip ID. Unsupported
+/// 2..=6, select legacy VCEK (not VLEK or chip-secret VCEK), and expose an
+/// unmasked chip ID. Only guest reports (VMPL 0..=3) are supported. Unsupported
 /// or malformed encodings and mismatched VCEK TCB/HWID/product bindings fail.
 ///
 /// Older v2 reports have no CPUID: generation is obtained from the authenticated
@@ -77,6 +78,8 @@ pub struct SnpVerifyResult {
 /// `parse::snp_report` remains available for permissive inspection. This function
 /// does not check revocation, expected REPORTDATA, measurement policy, or TCB
 /// minimums; callers must apply their own acceptance policy.
+/// Version 6 ETCB bytes are signed claims, not certificate-bound TCB components;
+/// processor-specific ETCB interpretation and minimums are not checked.
 pub fn verify_snp_report(
     report_bytes: &[u8],
     vcek_chain_pem: &[u8],
@@ -153,9 +156,9 @@ pub(crate) fn verify_snp_report_with_roots(
 /// Validate the supported report wire formats without applying acceptance policy.
 fn validate_report_format(report: &SnpReport) -> io::Result<()> {
     let invalid = |message| io::Error::new(io::ErrorKind::InvalidData, message);
-    if !matches!(report.version, 2..=5) {
+    if !matches!(report.version, 2..=6) {
         return Err(invalid(
-            "unsupported SNP report version (expected 2 through 5)",
+            "unsupported SNP report version (expected 2 through 6)",
         ));
     }
     if report.signature_algo != 1 {
@@ -187,14 +190,21 @@ fn validate_report_format(report: &SnpReport) -> io::Result<()> {
     if report.cpuid().is_some_and(|fms| fms[2] > 15) {
         return Err(invalid("SNP CPUID stepping exceeds four bits"));
     }
-    let mitigation_reserved = if report.version == 5 { 16 } else { 0 };
+    // _reserved4 starts at 0x1f8. v5 defines mitigation vectors; v6 also
+    // defines ETCB at 0x220..0x280, retaining both surrounding reserved gaps.
+    let reserved_tail_nonzero = match report.version {
+        6 => report._reserved4[0x10..0x28]
+            .iter()
+            .chain(&report._reserved4[0x88..])
+            .any(|b| *b != 0),
+        5 => report._reserved4[0x10..].iter().any(|b| *b != 0),
+        _ => report._reserved4.iter().any(|b| *b != 0),
+    };
     if report._reserved0 != 0
         || report._reserved2 != 0
         || report._reserved3 != 0
         || report._reserved1[cpuid_reserved..].iter().any(|b| *b != 0)
-        || report._reserved4[mitigation_reserved..]
-            .iter()
-            .any(|b| *b != 0)
+        || reserved_tail_nonzero
     {
         return Err(invalid("nonzero reserved SNP report bytes"));
     }
@@ -217,6 +227,98 @@ fn le_to_be(le: &[u8]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Synthetic evidence, NOT hardware provenance or an AMD-issued chain.
+    const V6_REPORT: &[u8] = include_bytes!("testdata/snp_report_v6_synthetic.bin");
+    const V6_CHAIN: &[u8] = include_bytes!("testdata/snp_v6_synthetic_chain.pem");
+    const V6_ROOT: &[u8] = include_bytes!("testdata/snp_v6_synthetic_root.pem");
+
+    #[test]
+    fn verifies_synthetic_v6_and_authenticates_all_extended_tcb_bytes() {
+        let roots = crypto::parse_pem_chain(V6_ROOT).unwrap();
+        let verify = |report: &[u8]| {
+            verify_snp_report_with_roots(report, V6_CHAIN, &roots, &SnpVerifyPolicy::default())
+        };
+        let verified = verify(V6_REPORT).unwrap();
+        assert!(verified.chain_valid && verified.signature_valid && verified.vcek_binding_valid);
+        assert_eq!(
+            verified.measurements.report_data,
+            std::array::from_fn(|i| i as u8)
+        );
+        assert_eq!(verified.measurements.reported_tcb, 0xdb18_0000_0000_0004);
+        let parsed = crate::parse::snp_report(V6_REPORT).unwrap();
+        let etcb = parsed.extended_tcb().unwrap();
+        assert_eq!(etcb.current, std::array::from_fn(|i| i as u8));
+        assert_eq!(etcb.launch, std::array::from_fn(|i| 32 + i as u8));
+        assert_eq!(etcb.committed, std::array::from_fn(|i| 64 + i as u8));
+        for offset in (0x1f8..0x208).chain(0x220..0x280) {
+            let mut changed = V6_REPORT.to_vec();
+            changed[offset] ^= 1;
+            let err = verify(&changed).unwrap_err();
+            assert!(
+                err.to_string().contains("signature"),
+                "offset {offset:#x}: {err}"
+            );
+        }
+        for offset in (0x208..0x220).chain(0x280..0x2a0) {
+            let mut changed = V6_REPORT.to_vec();
+            changed[offset] = 1;
+            let err = verify(&changed).unwrap_err();
+            assert!(
+                err.to_string().contains("reserved"),
+                "offset {offset:#x}: {err}"
+            );
+        }
+        // A caller-supplied synthetic root must not bypass the production AMD pins.
+        let mut untrusted_chain = V6_CHAIN.to_vec();
+        untrusted_chain.extend_from_slice(V6_ROOT);
+        assert!(
+            verify_snp_report(V6_REPORT, &untrusted_chain, &SnpVerifyPolicy::default()).is_err()
+        );
+    }
+
+    #[test]
+    fn v6_keeps_guest_legacy_vcek_restrictions() {
+        let base = crate::parse::snp_report(V6_REPORT).unwrap();
+        validate_report_format(&base).unwrap();
+        for vmpl in [4, u32::MAX] {
+            let mut report = base;
+            report.vmpl = vmpl;
+            assert!(validate_report_format(&report)
+                .unwrap_err()
+                .to_string()
+                .contains("VMPL"));
+        }
+        for signer in 1..=7 {
+            let mut report = base;
+            report.flags = signer << 2;
+            assert!(validate_report_format(&report)
+                .unwrap_err()
+                .to_string()
+                .contains("VCEK"));
+        }
+        for version in [0, 1, 7, u32::MAX] {
+            let mut report = base;
+            report.version = version;
+            assert!(validate_report_format(&report)
+                .unwrap_err()
+                .to_string()
+                .contains("version"));
+        }
+        for version in 2..=5 {
+            let mut report = base;
+            report.version = version;
+            assert!(validate_report_format(&report)
+                .unwrap_err()
+                .to_string()
+                .contains("reserved"));
+        }
+        for size in [0, 1183, 1185] {
+            assert!(
+                verify_snp_report(&vec![0; size], V6_CHAIN, &SnpVerifyPolicy::default()).is_err()
+            );
+        }
+    }
 
     /// Real SEV-SNP evidence captured from Azure CVMs. Public measurements, no
     /// secrets — these are the ground truth for both crypto backends.
@@ -497,7 +599,7 @@ mod tests {
             let (base, chain, root, key) = synthetic_case();
             let mut cases: Vec<(usize, Vec<u8>, &str)> = Vec::new();
             for (offset, values, message) in [
-                (0, vec![0u32, 1, 6], "version"),
+                (0, vec![0u32, 1, 7], "version"),
                 (0x34, vec![0, 2], "algorithm"),
                 (0x30, vec![4], "VMPL"),
                 (0x48, vec![4, 8, 12, 16, 20, 24, 28], "VCEK"),
@@ -534,14 +636,17 @@ mod tests {
         fn accepts_versioned_layouts_without_adding_policy_or_stepping_rules() {
             let (base, chain, root, key) = synthetic_case();
             assert_eq!(&base[0x188..0x18b], &[0x19, 1, 1]);
-            for version in 2u32..=5 {
+            for version in 2u32..=6 {
                 let mut report = base.clone();
                 report[..4].copy_from_slice(&version.to_le_bytes());
                 if version == 2 {
                     report[0x188..0x1a0].fill(0);
                 }
-                if version == 5 {
+                if version >= 5 {
                     report[0x1f8..0x208].fill(0xff); // opaque mitigation vectors
+                }
+                if version == 6 {
+                    report[0x220..0x280].fill(0xff); // opaque, authenticated ETCB
                 }
                 sign_report(&mut report, &key);
                 let result = verify(&report, &chain, &root).unwrap();
@@ -551,6 +656,7 @@ mod tests {
                 sign_report(&mut report, &key);
                 assert_invalid(&report, &chain, &root, "reserved");
             }
+
             for step in [0, 2, 15] {
                 let mut report = base.clone();
                 report[0x18a] = step; // Milan-B0 does not prescribe CPUID stepping
@@ -559,6 +665,31 @@ mod tests {
                 report[0x0a] |= 0x08; // DEBUG is acceptance policy, not wire format
                 sign_report(&mut report, &key);
                 verify(&report, &chain, &root).unwrap();
+            }
+        }
+
+        #[test]
+        fn v6_rejects_freshly_signed_reserved_bytes_and_binding_mismatches() {
+            let (mut base, chain, root, key) = synthetic_case();
+            base[..4].copy_from_slice(&6u32.to_le_bytes());
+            base[0x220..0x280].fill(0x5a);
+            sign_report(&mut base, &key);
+            assert!(verify(&base, &chain, &root).unwrap().vcek_binding_valid);
+            for offset in (0x208..0x220).chain(0x280..0x2a0) {
+                let mut report = base.clone();
+                report[offset] = 1;
+                sign_report(&mut report, &key);
+                assert_invalid(&report, &chain, &root, "reserved");
+            }
+            for (offset, value, message) in [
+                (0x188, 0x1a, "CPUID"),
+                (0x180, 0xff, "TCB"),
+                (0x1a0, 0xff, "HWID"),
+            ] {
+                let mut report = base.clone();
+                report[offset] = value;
+                sign_report(&mut report, &key);
+                assert_invalid(&report, &chain, &root, message);
             }
         }
 

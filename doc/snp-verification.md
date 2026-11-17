@@ -8,7 +8,8 @@
 
 With the `verify` feature, `verify::verify_snp_report()` checks a raw AMD
 SEV-SNP report and a caller-supplied PEM certificate chain. Verification uses
-OpenSSL on Linux and CNG/Crypt32 on Windows. The production trust anchors are
+OpenSSL on Linux and CNG/Crypt32 on Windows with `native`, or SymCrypt with
+`symcrypt` (see [backend selection](symcrypt.md)). The production trust anchors are
 the SDK's pinned AMD ARK certificates, not roots supplied with the evidence.
 
 A successful result establishes supported report structure, report signature,
@@ -34,8 +35,8 @@ names or unsigned extension data alone.
 
 ## Report Structure
 
-The verifier accepts exactly 1,184 bytes and report versions 2 through 5. It
-requires the VCEK signer, an unmasked nonzero chip ID, VMPL 0 through 3, and
+The verifier accepts exactly 1,184 bytes and report versions 2 through 6. It
+requires the legacy VCEK signer (selector 0), an unmasked nonzero chip ID, VMPL 0 through 3, and
 signature algorithm 1. Reserved signer/policy bits, version-specific reserved
 regions, and ECDSA component padding are validated.
 
@@ -45,9 +46,45 @@ configuration. `platform_info` remains opaque and authenticated: applying a
 reserved-bit mask from an older ABI would reject supported newer evidence.
 
 `SnpReport` preserves its existing wire layout and reserved fields for source
-compatibility. `cpuid()` exposes family/model/stepping in versions 3 through 5;
+compatibility. `cpuid()` exposes family/model/stepping in versions 3 through 6;
 version 2 has no CPUID claim. `mitigation_vectors()` exposes launch/current
-vectors only in version 5 without imposing required bits.
+vectors in versions 5 and 6 without imposing required bits.
+
+### Version 6
+
+The layout follows [AMD 56860 revision 1.59, Table 27](https://docs.amd.com/v/u/en-US/56860_PUB_SEV_SNP)
+(August 2026). Report size, signature algorithm, signature offset and signed
+length are unchanged. `extended_tcb()` returns `Some(SnpExtendedTcb)` only for
+v6, containing the raw 32-byte `current`, `launch` and `committed` ETCB claims
+in wire order. Other versions return `None`; an absent field is not a zero claim.
+The pretty-printer used by `tee-report` also displays CPUID, mitigation vectors
+and ETCB when their report version defines them.
+
+| Byte range | v6 meaning |
+|---|---|
+| `0x1f8..0x208` | Launch/current mitigation vectors, as in v5 |
+| `0x208..0x220` | Reserved, required zero |
+| `0x220..0x240` | CURRENT_ETCB |
+| `0x240..0x260` | LAUNCH_ETCB |
+| `0x260..0x280` | COMMITTED_ETCB |
+| `0x280..0x2a0` | Reserved, required zero |
+
+These are half-open byte ranges, based on the ABI's explicit offsets. The
+Table 27 row at `0x208` labels bits `192:0`; the next field starts at `0x220`,
+so the reserved byte span is 24 bytes, not 25.
+
+ETCB is authenticated by the report signature, but remains opaque: this change
+does not interpret processor-specific components, compare ETCB with certificate
+extensions, enforce minimums or compare current/launch/committed values.
+Legacy VCEK binding continues to use `reported_tcb`, never ETCB.
+
+This is v6 support **within the existing guest/legacy-VCEK trust model**, not
+support for every v6 signer or processor. Host-requested reports (VMPL
+`0xffffffff`), chip-secret VCEK (selector 2), VLEK, and Venice/product mappings
+outside the table below remain rejected. No AMD roots or trust policies are
+added. Unknown report versions (including v7) remain rejected by verification.
+Earlier versions retain their reserved-byte rules; v6 ETCB bytes cannot be
+smuggled into a v2-v5 report.
 
 `parse::snp_report()` remains a permissive inspection API. Parsing alone is
 not verification and must not be used as evidence acceptance.
@@ -124,6 +161,25 @@ Synthetic signed reports and certificates test authenticated negative paths
 with test-only roots on Linux. Those roots are not accepted by the production
 API. Native Windows tests use real evidence and shared binding tests to cover
 the CNG/Crypt32 path.
+
+The `snp_report_v6_synthetic.bin`, `snp_v6_synthetic_chain.pem` and
+`snp_v6_synthetic_root.pem` fixtures are **synthetic**, not captured AMD evidence.
+They were generated using fresh P-384 keys and SHA-384 ECDSA signatures, with
+a test ARK -> `SEV-Milan` ASK -> `SEV-VCEK` chain (valid 2020 through 2049).
+The leaf uses legacy Milan extension encodings, a synthetic chip ID `01..40`,
+and `reported_tcb = 0xdb18000000000004`. The report has version 6, VMPL 0,
+policy bit 17, patterned REPORTDATA/measurement, mitigation vectors
+`0x1234`/`0x5678`, and three distinct nonzero ETCB byte patterns.
+Private keys were not saved or committed. These deliberately exercise opaque
+ETCB handling; they do not establish which ETCB values real Milan firmware emits.
+
+All verification backends run the same synthetic-v6 signature/chain/binding
+success test using a test-only explicit root. Every ETCB/vector byte is tampered
+individually to prove signature coverage; every v6 reserved-gap byte is checked.
+Freshly re-signed negative cases additionally exercise structural and binding
+rejections on Linux/native. The production API and CLI reject the synthetic
+chain, even if its root is supplied as collateral. No real v6 report/AMD chain
+was supplied, so hardware interoperability remains unverified.
 
 ## Implementation Map
 
