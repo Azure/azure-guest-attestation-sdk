@@ -350,7 +350,7 @@ Commands:
    * For TDX: fetches a TD quote via IMDS.
    * Output defaults to hex; `--base64` switches to standard base64.
 
-* `azure-guest-attest guest-attest [--provider loopback|maa] [--endpoint <MAA_URL>] [--user-data <DATA>] [--decode] [--show-request]`
+* `azure-guest-attest guest-attest [--provider loopback|maa] [--endpoint <MAA_URL>] [--user-data <DATA>] [--verify-user-data] [--decode] [--show-request]`
    * Collects TPM + TEE evidence, builds a GuestAttestationParameters JSON payload, base64url encodes it and submits to the selected provider.
    * Providers:
       * `loopback` (default): Returns an echo token embedding the request (testing only).
@@ -361,6 +361,10 @@ Commands:
      the value is covered by the hardware signature.
       * This differs from `--client-payload`, which is transport-level metadata in the
         request JSON and is **not** bound to the TEE report. Use `--user-data` for a nonce.
+   * `--verify-user-data` requires explicit `--user-data` and checks its parsed bytes against the returned JWT's hex-encoded runtime `user-data` claim under `x-ms-isolation-tee.x-ms-runtime` or `x-ms-runtime`.
+     Exact bytes or the full 64-byte zero-padded value are accepted; missing, malformed, conflicting, or mismatched claims cause exit code 2.
+     The check runs without `--decode`; with `--json`, the result includes `user_data_verified`, sets `passed` to false on failure, and includes an `error`.
+     This checks claim contents, not the JWT signature, and fails for loopback echo tokens because they have no JWT runtime claims.
    * `--decode` attempts to parse the returned token as JWT and pretty-print header & payload JSON.
    * `--show-request` prints the original JSON prior to encoding.
 
@@ -378,6 +382,9 @@ azure-guest-attest guest-attest --provider loopback --show-request --decode
 
 # Guest attestation against MAA shared WEU endpoint
 azure-guest-attest guest-attest --provider maa --decode
+
+# Require the returned runtime claims to contain the supplied user data
+azure-guest-attest guest-attest --provider maa --user-data utf8:hello --verify-user-data
 
 # Custom MAA endpoint
 azure-guest-attest guest-attest --provider maa --endpoint "https://<your-instance>.attest.azure.net/attest/AzureGuest?api-version=2020-10-01" --decode

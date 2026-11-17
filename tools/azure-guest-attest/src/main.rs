@@ -206,6 +206,9 @@ enum Commands {
         /// this IS covered by the hardware signature.
         #[arg(long = "user-data", value_name = "DATA", default_value = "")]
         user_data: String,
+        /// Require returned runtime claims to match --user-data (does not verify JWT signatures)
+        #[arg(long, requires = "user_data")]
+        verify_user_data: bool,
         /// Optional JSON object of key-value pairs to embed (values base64 encoded) in ClientPayload
         #[arg(long, value_name = "JSON", default_value = "{}")]
         client_payload: String,
@@ -1105,12 +1108,14 @@ fn main() -> anyhow::Result<()> {
             provider,
             endpoint,
             user_data,
+            verify_user_data,
             client_payload,
             decode,
             show_request,
             pcr_index,
             json,
         } => {
+            let ud = parse_user_data_variable(&user_data)?;
             let tpm = Tpm::open().map_err(|e| anyhow::anyhow!("Failed to open TPM: {e}"))?;
             // Build provider enum, capturing the resolved MAA endpoint (if any).
             let mut endpoint_used: Option<String> = None;
@@ -1161,20 +1166,21 @@ fn main() -> anyhow::Result<()> {
             } else {
                 Some(validate_pcr_filter(&pcr_index)?)
             };
-            let ud = parse_user_data_variable(&user_data)?;
             let opts = azure_guest_attestation_sdk::client::AttestOptions {
                 client_payload: Some(client_payload.clone()),
                 pcr_selection,
-                user_data: if ud.is_empty() { None } else { Some(ud) },
+                user_data: if ud.is_empty() && !verify_user_data {
+                    None
+                } else {
+                    Some(ud)
+                },
             };
             let result = client.attest_guest(prov, Some(&opts))?;
 
-            // Only decrypt the token envelope and parse claims when the output
-            // actually needs it (--json result or --decode). Otherwise keep the
-            // provider token unchanged and skip the extra crypto/JSON work.
+            // Only decrypt and parse claims for output or user-data verification.
             // `attest_guest` may already return a decrypted JWT; if not, try an
             // envelope decrypt using the ephemeral key (recreated from PCRs).
-            let need_claims = json || decode;
+            let need_claims = json || decode || verify_user_data;
             let (final_token, claims) = if need_claims {
                 match &result.token {
                     Some(tok) => match client.decrypt_token(&result.pcrs, tok) {
@@ -1192,7 +1198,17 @@ fn main() -> anyhow::Result<()> {
             } else {
                 (result.token.clone(), None)
             };
-            let passed = final_token.is_some();
+            let verification_error = if verify_user_data {
+                verify_guest_user_data(
+                    claims.as_ref(),
+                    opts.user_data.as_deref().unwrap_or_default(),
+                )
+                .err()
+                .map(|e| e.to_string())
+            } else {
+                None
+            };
+            let passed = final_token.is_some() && verification_error.is_none();
 
             if json {
                 let mut out = serde_json::json!({
@@ -1204,6 +1220,13 @@ fn main() -> anyhow::Result<()> {
                     "token": final_token,
                     "claims": claims,
                 });
+                if verify_user_data {
+                    out["user_data_verified"] =
+                        serde_json::Value::Bool(verification_error.is_none());
+                    if let Some(error) = &verification_error {
+                        out["error"] = serde_json::Value::String(error.clone());
+                    }
+                }
                 if show_request {
                     out["request"] = serde_json::Value::String(result.request_json.clone());
                 }
@@ -1212,20 +1235,24 @@ fn main() -> anyhow::Result<()> {
                 if show_request {
                     writeln!(writer, "Request JSON:\n{}", result.request_json)?;
                 }
-                match &final_token {
-                    Some(tok) => {
-                        if let Some(raw) = &result.token {
-                            writeln!(writer, "Token (raw/envelope b64url): {raw}")?;
-                        }
-                        if decode {
-                            writeln!(writer, "Token (decoded):")?;
-                            decode_and_print_jwt(tok, &mut *writer)?;
-                        }
-                        writeln!(writer, "Attested Guest Successfully")?;
+                if let Some(tok) = &final_token {
+                    if let Some(raw) = &result.token {
+                        writeln!(writer, "Token (raw/envelope b64url): {raw}")?;
                     }
-                    None => {
-                        writeln!(writer, "Attestation failed: no token returned")?;
+                    if decode && verification_error.is_none() {
+                        writeln!(writer, "Token (decoded):")?;
+                        decode_and_print_jwt(tok, &mut *writer)?;
                     }
+                }
+                if passed {
+                    if verify_user_data {
+                        writeln!(writer, "User data verified in returned runtime claims")?;
+                    }
+                    writeln!(writer, "Attested Guest Successfully")?;
+                } else if let Some(error) = &verification_error {
+                    writeln!(writer, "Attestation failed: {error}")?;
+                } else {
+                    writeln!(writer, "Attestation failed: no token returned")?;
                 }
             }
 
@@ -1608,6 +1635,47 @@ fn jwt_payload_value(token: &str) -> Option<serde_json::Value> {
     None
 }
 
+/// Compare runtime user-data claims, not client payloads, with the supplied bytes.
+///
+/// The platform may return the exact bytes or the full zero-padded NV value.
+/// This checks claim contents only; it does not authenticate the JWT.
+fn verify_guest_user_data(
+    claims: Option<&serde_json::Value>,
+    expected: &[u8],
+) -> anyhow::Result<()> {
+    const USER_DATA_SIZE: usize = 64;
+    const CLAIM_PATHS: &[&str] = &[
+        "/x-ms-isolation-tee/x-ms-runtime/user-data",
+        "/x-ms-runtime/user-data",
+    ];
+    let claims = claims.context("user-data verification failed: no parseable token claims")?;
+    let mut found = false;
+    for path in CLAIM_PATHS {
+        let Some(value) = claims.pointer(path) else {
+            continue;
+        };
+        found = true;
+        let encoded = value
+            .as_str()
+            .context("user-data verification failed: runtime user-data is not a hex string")?;
+        let actual = hex::decode(encoded).map_err(|_| {
+            anyhow::anyhow!("user-data verification failed: invalid runtime user-data hex")
+        })?;
+        anyhow::ensure!(
+            actual.len() <= USER_DATA_SIZE
+                && (actual.len() == expected.len() || actual.len() == USER_DATA_SIZE)
+                && actual.starts_with(expected)
+                && actual[expected.len()..].iter().all(|&b| b == 0),
+            "user-data verification failed: runtime user-data does not match --user-data"
+        );
+    }
+    anyhow::ensure!(
+        found,
+        "user-data verification failed: runtime user-data claim is missing"
+    );
+    Ok(())
+}
+
 /// Best-effort extraction of a TCB value from attestation token claims.
 ///
 /// Searches the claims tree (including TEE claims nested under
@@ -1969,6 +2037,106 @@ mod tests {
     use core::mem::size_of;
     use serde_json::json;
     use std::path::PathBuf;
+
+    #[test]
+    fn guest_user_data_verification_requires_explicit_input() {
+        assert!(Cli::try_parse_from(["tool", "guest-attest", "--verify-user-data"]).is_err());
+        let cli = Cli::try_parse_from([
+            "tool",
+            "guest-attest",
+            "--user-data",
+            "utf8:hello",
+            "--verify-user-data",
+        ])
+        .unwrap();
+        let Commands::GuestAttest {
+            user_data,
+            verify_user_data,
+            ..
+        } = cli.command
+        else {
+            panic!("expected guest-attest");
+        };
+        assert!(verify_user_data);
+        assert_eq!(parse_user_data_variable(&user_data).unwrap(), b"hello");
+        assert!(Cli::try_parse_from(["tool", "tee-attest", "--verify-user-data"]).is_err());
+    }
+
+    #[test]
+    fn guest_user_data_verification_matches_runtime_claim_bytes() {
+        for input in ["utf8:hello", "hex:68656c6c6f", "68656c6c6f"] {
+            let expected = parse_user_data_variable(input).unwrap();
+            for encoded in [
+                hex::encode_upper(&expected),
+                format!("{}{}", hex::encode(&expected), "00".repeat(59)),
+            ] {
+                for claims in [
+                    json!({"x-ms-isolation-tee": {"x-ms-runtime": {"user-data": encoded}}}),
+                    json!({"x-ms-runtime": {"user-data": encoded}}),
+                ] {
+                    verify_guest_user_data(Some(&claims), &expected).unwrap();
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn guest_user_data_verification_preserves_trailing_zero_bytes() {
+        for expected in [vec![], vec![0xab, 0], vec![0xcd; 64]] {
+            let mut padded = expected.clone();
+            padded.resize(64, 0);
+            for bytes in [&expected, &padded] {
+                let claims = json!({"x-ms-runtime": {"user-data": hex::encode(bytes)}});
+                verify_guest_user_data(Some(&claims), &expected).unwrap();
+            }
+        }
+        let claims = json!({"x-ms-runtime": {"user-data": "AB"}});
+        assert!(verify_guest_user_data(Some(&claims), &[0xab, 0]).is_err());
+    }
+
+    #[test]
+    fn guest_user_data_verification_rejects_missing_or_unrelated_claims() {
+        assert!(verify_guest_user_data(None, b"hello").is_err());
+        for claims in [
+            json!({}),
+            json!({"user-data": "68656c6c6f"}),
+            json!({"client-payload": {"user-data": "68656c6c6f"}}),
+            json!({"request": {"x-ms-runtime": {"user-data": "68656c6c6f"}}}),
+        ] {
+            let error = verify_guest_user_data(Some(&claims), b"hello").unwrap_err();
+            assert!(error.to_string().contains("missing"), "{error}");
+        }
+    }
+
+    #[test]
+    fn guest_user_data_verification_rejects_malformed_and_mismatched_values() {
+        for value in [
+            json!(null),
+            json!(42),
+            json!("hello"),
+            json!("6"),
+            json!(""),
+            json!("68656c6c6e"),
+            json!("68656c6c6f00"),
+            json!(format!("68656c6c6f{}01", "00".repeat(58))),
+            json!(format!("68656c6c6f{}", "00".repeat(60))),
+        ] {
+            let claims = json!({"x-ms-isolation-tee": {"x-ms-runtime": {"user-data": value}}});
+            assert!(
+                verify_guest_user_data(Some(&claims), b"hello").is_err(),
+                "{claims}"
+            );
+        }
+    }
+
+    #[test]
+    fn guest_user_data_verification_rejects_conflicting_runtime_claims() {
+        let claims = json!({
+            "x-ms-runtime": {"user-data": "68656c6c6f"},
+            "x-ms-isolation-tee": {"x-ms-runtime": {"user-data": "776f726c64"}}
+        });
+        assert!(verify_guest_user_data(Some(&claims), b"hello").is_err());
+    }
 
     #[test]
     fn tee_report_defaults_to_platform() {
