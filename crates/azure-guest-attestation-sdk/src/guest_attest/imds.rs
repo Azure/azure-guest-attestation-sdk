@@ -394,7 +394,7 @@ mod tests {
             requests
         });
         let report = vec![0xfb; crate::report::TDX_VM_REPORT_SIZE];
-        let result = client.get_td_quote(&report);
+        let result = client.fetch_td_quote_http(&report);
         finished.store(true, Ordering::Release);
         let requests = server.join().unwrap();
         use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
