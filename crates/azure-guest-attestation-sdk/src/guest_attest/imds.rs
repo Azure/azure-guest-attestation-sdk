@@ -225,15 +225,27 @@ impl ImdsClient {
         // Fallback attempt: URL safe no pad (some older docs/examples)
         let url_b64 = URL_SAFE_NO_PAD.encode(rep);
         let body_url = serde_json::json!({"report": url_b64});
-        let resp_url = self
-            .http
-            .post(TDQUOTE_ENDPOINT)
-            .header("Metadata", "true")
-            .json(&body_url)
-            .send()
-            .map_err(|e| io::Error::other(format!("tdquote http (url b64) error: {e}")))?;
-        let status_url = resp_url.status();
-        let text_url = resp_url.text().unwrap_or_default();
+        let mut attempt = 1;
+        let (status_url, text_url) = loop {
+            let resp_url = self
+                .http
+                .post(TDQUOTE_ENDPOINT)
+                .header("Metadata", "true")
+                .json(&body_url)
+                .send()
+                .map_err(|e| io::Error::other(format!("tdquote http (url b64) error: {e}")))?;
+            let status = resp_url.status();
+            let retry_after = resp_url
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .cloned();
+            let text = resp_url.text().unwrap_or_default();
+            if !is_throttled(status, &text) || attempt >= THROTTLE_MAX_ATTEMPTS {
+                break (status, text);
+            }
+            std::thread::sleep(throttle_delay(attempt, retry_after.as_ref()));
+            attempt += 1;
+        };
         if status_url.is_success() {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text_url) {
                 if let Some(quote_enc) = v.get("quote").and_then(|x| x.as_str()) {
@@ -251,6 +263,12 @@ impl ImdsClient {
             }
             return Err(io::Error::other(format!(
                 "tdquote fallback success status but missing/invalid JSON: {text_url}"
+            )));
+        }
+
+        if is_throttled(status_url, &text_url) {
+            return Err(io::Error::other(format!(
+                "tdquote fallback throttled (status {status_url}) after {attempt} attempts: {text_url}"
             )));
         }
 
@@ -302,6 +320,126 @@ mod tests {
         assert_eq!(
             throttle_delay(2, Some(&HeaderValue::from_static("soon"))),
             Duration::from_secs(4)
+        );
+    }
+
+    fn tdquote_with_responses(
+        responses: Vec<(u16, &'static str)>,
+    ) -> (io::Result<Vec<u8>>, Vec<String>) {
+        use std::io::{BufRead, BufReader, Read, Write};
+        use std::net::TcpListener;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let client = ImdsClient {
+            http: crate::crypto::http_client_builder()
+                .no_proxy()
+                .proxy(
+                    reqwest::Proxy::http(format!("http://{}", listener.local_addr().unwrap()))
+                        .unwrap(),
+                )
+                .timeout(Duration::from_secs(5))
+                .build()
+                .unwrap(),
+        };
+        let finished = Arc::new(AtomicBool::new(false));
+        let server_finished = Arc::clone(&finished);
+        let server = std::thread::spawn(move || {
+            let mut requests = Vec::new();
+            while !server_finished.load(Ordering::Acquire) {
+                let (stream, _) = match listener.accept() {
+                    Ok(connection) => connection,
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(5));
+                        continue;
+                    }
+                    Err(error) => panic!("accept test request: {error}"),
+                };
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                stream
+                    .set_write_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut stream = BufReader::new(stream);
+                let mut content_length = 0;
+                loop {
+                    let mut line = String::new();
+                    assert_ne!(stream.read_line(&mut line).unwrap(), 0);
+                    if line == "\r\n" {
+                        break;
+                    }
+                    if let Some((name, value)) = line.split_once(':') {
+                        if name.eq_ignore_ascii_case("content-length") {
+                            content_length = value.trim().parse().unwrap();
+                        }
+                    }
+                }
+                let mut body = vec![0; content_length];
+                stream.read_exact(&mut body).unwrap();
+                let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                requests.push(body["report"].as_str().unwrap().to_owned());
+                let (status, body) = responses
+                    .get(requests.len() - 1)
+                    .expect("unexpected extra tdquote request");
+                write!(
+                    stream.get_mut(),
+                    "HTTP/1.1 {status} Test\r\nContent-Length: {}\r\nRetry-After: 0\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            }
+            requests
+        });
+        let report = vec![0xfb; crate::report::TDX_VM_REPORT_SIZE];
+        let result = client.get_td_quote(&report);
+        finished.store(true, Ordering::Release);
+        let requests = server.join().unwrap();
+        use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
+        use base64::Engine;
+        assert_eq!(requests[0], STANDARD.encode(&report));
+        let fallback_report = URL_SAFE_NO_PAD.encode(&report);
+        assert!(requests.iter().skip(1).all(|body| body == &fallback_report));
+        (result, requests)
+    }
+
+    #[test]
+    fn tdquote_fallback_retries_throttling_then_succeeds() {
+        for throttle in [(429, "throttled"), (403, "RequestRateLimitExceeded")] {
+            let (result, requests) = tdquote_with_responses(vec![
+                (400, "unsupported encoding"),
+                throttle,
+                (200, r#"{"quote":"AQID"}"#),
+            ]);
+            assert_eq!(result.unwrap(), [1, 2, 3]);
+            assert_eq!(requests.len(), 3);
+        }
+    }
+
+    #[test]
+    fn tdquote_fallback_stops_after_four_throttled_attempts() {
+        for throttle in [(429, "throttled"), (403, "RequestRateLimitExceeded")] {
+            let mut responses = vec![(400, "unsupported encoding")];
+            responses.extend([throttle; 4]);
+            let (result, requests) = tdquote_with_responses(responses);
+            assert_eq!(requests.len(), 5);
+            let error = result.unwrap_err().to_string();
+            assert!(error.contains("tdquote fallback throttled"), "{error}");
+            assert!(error.contains("after 4 attempts"), "{error}");
+            assert!(error.contains(throttle.1), "{error}");
+        }
+    }
+
+    #[test]
+    fn tdquote_fallback_does_not_retry_plain_forbidden() {
+        let (result, requests) =
+            tdquote_with_responses(vec![(400, "unsupported encoding"), (403, "Forbidden")]);
+        assert_eq!(requests.len(), 2);
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "tdquote failed (std status 400 Bad Request, fallback status 403 Forbidden) std_body='unsupported encoding' fallback_body='Forbidden'"
         );
     }
 
